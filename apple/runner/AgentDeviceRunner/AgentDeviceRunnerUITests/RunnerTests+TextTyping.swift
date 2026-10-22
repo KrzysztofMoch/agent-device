@@ -478,9 +478,17 @@ extension RunnerTests {
       observedText.count
     )
     clearTextInput(app: app, reader: &reader)
-    if let input = reader.input() {
-      reader.dispatch { input.element.typeText(expectedText) }
+    // An input the clear removed or let another take the place of has nowhere for the repair to go.
+    guard let input = reader.input() else {
+      return TextEntryResult(
+        verified: nil,
+        repaired: false,
+        expectedText: expectedText,
+        observedText: nil,
+        failure: .commitNotObserved
+      )
     }
+    reader.dispatch { input.element.typeText(expectedText) }
     return verifyTextEntry(
       reader: &reader,
       expectedText: expectedText,
