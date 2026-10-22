@@ -251,7 +251,8 @@ extension RunnerTests {
     case cleared
     /// The field never exposes its value, so it is typed into unverified, as the commit wait leaves it.
     case unverified
-    /// The field still held text after the last pass, or could not be read. Nothing is typed.
+    /// The field still held text after the last pass, or could not be read. The synthesized post
+    /// types nothing; the element route's clear falls back to delete bursts.
     case notCleared
     /// A clear post stopped the plan.
     case stopped

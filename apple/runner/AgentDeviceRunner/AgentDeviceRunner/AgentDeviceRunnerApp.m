@@ -762,6 +762,10 @@ static const CGFloat AgentDeviceTextEntryNeighbourGap = 16;
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-unnamed-input"]) {
       textField.accessibilityIdentifier = @"agent-device-hardware-keyboard-input";
     }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--agent-device-text-entry-long-prefill"]) {
+      // Longer than one clear burst and far wider than the field, so its end is scrolled out of view.
+      textField.text = [@"" stringByPaddingToLength:300 withString:@"stale long value " startingAtIndex:0];
+    }
     textField.borderStyle = UITextBorderStyleRoundedRect;
     // An empty input view keeps the software keyboard down, which is the hardware-keyboard responder
     // these routes are addressed to. `--agent-device-text-entry-soft-keyboard` leaves the real input
