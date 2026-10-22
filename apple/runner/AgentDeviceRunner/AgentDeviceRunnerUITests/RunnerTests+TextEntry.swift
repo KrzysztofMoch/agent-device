@@ -355,11 +355,16 @@ extension RunnerTests {
     }
   }
 
-  /// Clears `input`, which must have been read with nothing dispatched since. On iOS a readable
-  /// value is selected whole and deleted, wherever the caret is. Otherwise, or when text is left,
-  /// delete bursts run from the caret, and a value longer than one burst is read again after each
-  /// burst until it reads empty, stops shortening, or has had at least one burst more than it needs.
-  func clearTextInput(app: XCUIApplication, _ input: ResolvedTextEntryInput) {
+  /// Clears the reader's input. Every post goes through `reader.dispatch` and every read back through
+  /// `reader.input()`, so a bound target's clear stops at an input that took its place. On iOS a
+  /// readable value is selected whole and deleted, wherever the caret is. Otherwise, or when text is
+  /// left, delete bursts run from the caret, and a value longer than one burst is read again after
+  /// each burst until it reads empty, stops shortening, or has had at least one burst more than it
+  /// needs.
+  func clearTextInput(app: XCUIApplication, reader: inout TextEntryReader) {
+    guard let input = reader.input() else {
+      return
+    }
     // Skip the clear (edge-tap, select all, delete bursts) ONLY when we can confirm the
     // field is empty. Why skip: the edge-tap computes a point from the element frame, which can
     // be stale after the field repositions on focus (e.g. the Settings search bar jumps
@@ -376,15 +381,13 @@ extension RunnerTests {
     var valueLength = normalizedElementText(input.attributes.value).count
     // The tap also focuses the field, which a clear can reach with focus unconfirmed.
 #if !os(tvOS)
-    moveCaretToEnd(app: app, input: input)
+    reader.dispatch { moveCaretToEnd(app: app, input: input) }
 #endif
-    // The handle can be index-bound, so an input that took this one's place, such as the next
-    // screen's after a clear navigated, reads through it too. Only `input` itself is cleared further;
-    // an input first read without a snapshot has no identity to hold a later read to.
-    func readInput() -> ResolvedTextEntryInput? {
-      ResolvedTextEntryInput(reading: input.element).flatMap {
-        input.identity == nil || $0.identity == input.identity ? $0 : nil
-      }
+    // An input that stops answering once focused (#3060) cannot be read back, so it gets one burst.
+    guard reader.input() != nil else {
+      let burst = Self.textClearBurst(valueLength: valueLength)
+      reader.dispatch { input.element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: burst)) }
+      return
     }
 #if os(iOS)
     // The tap aims at the end of what the field shows, which a long value has scrolled past, so
@@ -395,20 +398,24 @@ extension RunnerTests {
       var passes = 0
       let outcome = Self.clearUntilEmpty(
         clearOnce: {
+          guard let input = reader.input() else {
+            return .stop
+          }
           passes += 1
-          input.element.typeKey("a", modifierFlags: .command)
-          input.element.typeText(XCUIKeyboardKey.delete.rawValue)
+          reader.dispatch {
+            input.element.typeKey("a", modifierFlags: .command)
+            input.element.typeText(XCUIKeyboardKey.delete.rawValue)
+          }
           return .posted
         },
         read: {
-          textValueRead(for: readInput()?.attributes, treatingPlaceholderAsEmpty: true)
+          textValueRead(for: reader.input()?.attributes, treatingPlaceholderAsEmpty: true)
         }
       )
       NSLog("AGENT_DEVICE_RUNNER_TEXT_ENTRY_CLEAR route=element passes=%d outcome=%@", passes, String(describing: outcome))
-      // Text left after every pass goes to the bursts; an input that stopped resolving, or that another
-      // input replaced, is not typed into.
+      // Text left after every pass goes to the bursts; an input that no longer resolves is not typed into.
       guard outcome == .notCleared,
-            let remaining = readInput().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) })
+            let remaining = reader.input().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) })
       else {
         return
       }
@@ -416,11 +423,14 @@ extension RunnerTests {
     }
 #endif
     for _ in 0...(valueLength / Self.maxTextClearBurst + 1) {
+      guard let input = reader.input() else {
+        return
+      }
       let burst = Self.textClearBurst(valueLength: valueLength)
-      input.element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: burst))
+      reader.dispatch { input.element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: burst)) }
       // A burst that covers the value needs no read.
       guard burst < valueLength + Self.textClearSlack,
-            let remaining = readInput().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) }),
+            let remaining = reader.input().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) }),
             Self.textClearContinues(clearedLength: valueLength, remainingLength: remaining.count)
       else {
         return
