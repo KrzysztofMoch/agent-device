@@ -174,7 +174,7 @@ extension RunnerTests {
   // ending the clear as a field that could not be read.
   func testSynthesizedClearLeavesAMaskedFieldUnverified() {
     var passes = 0
-    let outcome = Self.clearForSynthesizedReplacement(
+    let outcome = Self.clearUntilEmpty(
       clearOnce: {
         passes += 1
         return .posted
@@ -477,7 +477,7 @@ extension RunnerTests {
     for testCase in cases {
       var passes = 0
       var reads = testCase.reads[...]
-      let outcome = Self.clearForSynthesizedReplacement(
+      let outcome = Self.clearUntilEmpty(
         clearOnce: {
           passes += 1
           return .posted
@@ -488,7 +488,7 @@ extension RunnerTests {
       XCTAssertEqual(passes, testCase.passes, "\(testCase.reads)")
     }
     XCTAssertEqual(
-      Self.clearForSynthesizedReplacement(clearOnce: { .stop }, read: { .text("") }),
+      Self.clearUntilEmpty(clearOnce: { .stop }, read: { .text("") }),
       .stopped
     )
   }

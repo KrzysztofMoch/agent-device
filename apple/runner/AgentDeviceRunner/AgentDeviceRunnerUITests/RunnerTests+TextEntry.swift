@@ -379,9 +379,12 @@ extension RunnerTests {
     moveCaretToEnd(app: app, input: input)
 #endif
     // The handle can be index-bound, so an input that took this one's place, such as the next
-    // screen's after a clear navigated, reads through it too. Only `input` itself is cleared further.
+    // screen's after a clear navigated, reads through it too. Only `input` itself is cleared further;
+    // an input first read without a snapshot has no identity to hold a later read to.
     func readInput() -> ResolvedTextEntryInput? {
-      ResolvedTextEntryInput(reading: input.element).flatMap { $0.identity == input.identity ? $0 : nil }
+      ResolvedTextEntryInput(reading: input.element).flatMap {
+        input.identity == nil || $0.identity == input.identity ? $0 : nil
+      }
     }
 #if os(iOS)
     // The tap aims at the end of what the field shows, which a long value has scrolled past, so
@@ -390,7 +393,7 @@ extension RunnerTests {
     // bursts alone.
     if existing != nil {
       var passes = 0
-      let outcome = Self.clearForSynthesizedReplacement(
+      let outcome = Self.clearUntilEmpty(
         clearOnce: {
           passes += 1
           input.element.typeKey("a", modifierFlags: .command)

@@ -260,7 +260,7 @@ extension RunnerTests {
 
   /// Clears until the field reads empty, at most `maxClearPassCount` passes. A read that cannot
   /// answer ends the clear, so the post never types over text it could not see removed.
-  static func clearForSynthesizedReplacement(
+  static func clearUntilEmpty(
     clearOnce: () -> SynthesizedStepDispatch,
     read: () -> TextValueRead
   ) -> SynthesizedClearOutcome {
@@ -379,7 +379,7 @@ extension RunnerTests {
         }
         if step.replacesExistingText {
           var passes = 0
-          let outcome = Self.clearForSynthesizedReplacement(
+          let outcome = Self.clearUntilEmpty(
             clearOnce: {
               passes += 1
               return enter(XCUIKeyboardKey.delete.rawValue, replacingExistingText: true)
