@@ -378,6 +378,11 @@ extension RunnerTests {
 #if !os(tvOS)
     moveCaretToEnd(app: app, input: input)
 #endif
+    // The handle can be index-bound, so an input that took this one's place, such as the next
+    // screen's after a clear navigated, reads through it too. Only `input` itself is cleared further.
+    func readInput() -> ResolvedTextEntryInput? {
+      ResolvedTextEntryInput(reading: input.element).flatMap { $0.identity == input.identity ? $0 : nil }
+    }
 #if os(iOS)
     // The tap aims at the end of what the field shows, which a long value has scrolled past, so
     // bursts from there reach only what is before the caret (#3851). Select all reaches all of it, but
@@ -393,17 +398,14 @@ extension RunnerTests {
           return .posted
         },
         read: {
-          textValueRead(
-            for: ResolvedTextEntryInput(reading: input.element)?.attributes,
-            treatingPlaceholderAsEmpty: true
-          )
+          textValueRead(for: readInput()?.attributes, treatingPlaceholderAsEmpty: true)
         }
       )
       NSLog("AGENT_DEVICE_RUNNER_TEXT_ENTRY_CLEAR route=element passes=%d outcome=%@", passes, String(describing: outcome))
-      // Text left after every pass goes to the bursts; a field that stopped resolving is not typed into.
+      // Text left after every pass goes to the bursts; an input that stopped resolving, or that another
+      // input replaced, is not typed into.
       guard outcome == .notCleared,
-            let remaining = ResolvedTextEntryInput(reading: input.element)
-              .flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) })
+            let remaining = readInput().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) })
       else {
         return
       }
@@ -415,8 +417,7 @@ extension RunnerTests {
       input.element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: burst))
       // A burst that covers the value needs no read.
       guard burst < valueLength + Self.textClearSlack,
-            let remaining = ResolvedTextEntryInput(reading: input.element)
-              .flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) }),
+            let remaining = readInput().flatMap({ editableTextValue(for: $0.attributes, treatingPlaceholderAsEmpty: true) }),
             Self.textClearContinues(clearedLength: valueLength, remainingLength: remaining.count)
       else {
         return
