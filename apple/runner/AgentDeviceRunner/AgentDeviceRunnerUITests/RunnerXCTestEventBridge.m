@@ -1,10 +1,16 @@
 #import "RunnerXCTestEventBridge.h"
 #import "RunnerObjCExceptionCatcher.h"
+#import "RunnerAXSnapshotBridge.h"
+// The shared full-screen rule, from the snapshot bridge; found via HEADER_SEARCH_PATHS.
+#import "ForegroundApplicationGeometry.h"
 #import <CoreGraphics/CoreGraphics.h>
 #import <XCTest/XCTest.h>
 #import <math.h>
 #if TARGET_OS_IOS
 #import <UIKit/UIKit.h>
+#import <dlfcn.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 #endif
 
 NSString * _Nullable RunnerResolveXCTestEventBridge(
@@ -95,14 +101,6 @@ NSString *RunnerFormatXCTestException(NSException *exception, NSString *fallback
   return [NSString stringWithFormat:@"%@: %@", name, reason];
 }
 
-static BOOL RunnerUsableWindowFrame(CGRect frame) {
-  if (CGRectIsEmpty(frame) || CGRectIsInfinite(frame) || CGRectIsNull(frame)) {
-    return NO;
-  }
-  return isfinite(frame.origin.x) && isfinite(frame.origin.y)
-    && isfinite(frame.size.width) && isfinite(frame.size.height);
-}
-
 static NSString *RunnerApplicationScreenFailureDescription(
   RunnerApplicationScreenFailure failure
 ) {
@@ -144,7 +142,7 @@ static RunnerApplicationScreenFailure RunnerResolveUsableWindow(
     readWindow = candidate;
   }];
   *observedFrame = frame;
-  if (exception != nil || !resolved || !RunnerUsableWindowFrame(frame)) {
+  if (exception != nil || !resolved || !AgentDeviceForegroundFrameIsMeasurable(frame)) {
     NSLog(
       @"AGENT_DEVICE_RUNNER_APP_SCREEN_UNRESOLVED stage=window frame=(%g,%g %gx%g) raised=%@ resolved=%@",
       frame.origin.x,
@@ -218,21 +216,114 @@ BOOL RunnerResolveApplicationScreen(
 // routed by the same window its reference frame was measured on. The window still resolves here:
 // its frame is read before its screen, and a window that answers empty or raises fails closed with
 // the same reasons the application walk gives.
-NSString * _Nullable RunnerResolveSoleScreenDisplayID(NSUInteger *displayID) {
+NSString * _Nullable RunnerResolveSoleScreenDisplayID(id application, NSUInteger *displayID) {
   id screen = nil;
-  return RunnerResolveSoleScreen(&screen, displayID);
+  return RunnerResolveSoleScreen(application, &screen, displayID);
 }
 
-NSString * _Nullable RunnerResolveSoleScreen(id _Nullable *screen, NSUInteger *displayID) {
+RunnerFullScreenEvidence RunnerFullScreenEvidenceFromForeground(
+  pid_t targetProcessID,
+  pid_t primaryProcessID,
+  CGRect appFrame,
+  CGRect screenFrame
+) {
+  // A pid that could not be read (or cannot own a process) proves nothing about ownership, so the
+  // answer is Unknown, never a guess that the app is not the primary app.
+  if (targetProcessID <= 0 || primaryProcessID <= 0) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  if (!AgentDeviceForegroundOwnershipMatches(primaryProcessID, targetProcessID)) {
+    return RunnerFullScreenEvidenceNotPrimaryApp;
+  }
+  // A frame that is not a usable measurement is a runtime that said nothing, not a window that
+  // differs, so the answer is Unknown, never the Windowed a comparison of the numbers would read as.
+  if (!AgentDeviceForegroundFramesAreMeasurable(appFrame, screenFrame)) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  return AgentDeviceForegroundWindowFillsScreen(appFrame, screenFrame)
+    ? RunnerFullScreenEvidenceFillsScreen
+    : RunnerFullScreenEvidenceWindowed;
+}
+
+#if TARGET_OS_IOS
+
+// The private AXElement class the shared protocol describes comes from AXRuntime; the bridge guest
+// loads the same pair of private frameworks to reach it.
+static NSString *const RunnerAXRuntimePath =
+  @"/System/Library/PrivateFrameworks/AXRuntime.framework/AXRuntime";
+static NSString *const RunnerXCTAutomationSupportPath =
+  @"/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework/XCTAutomationSupport";
+
+static Class<AgentDeviceForegroundElement> _Nullable RunnerForegroundElementClass(void) {
+  // Cache the answer including its absence: a runtime without the class would otherwise pay two
+  // RTLD_NOW lookups per window-less gesture forever. Code availability is the only thing cached
+  // here — the probe re-measures every attempt, because a resize changes the answer.
+  static BOOL resolved = NO;
+  static Class<AgentDeviceForegroundElement> _Nullable cached = Nil;
+  if (!resolved) {
+    Class element = objc_lookUpClass("AXElement");
+    if (element == Nil) {
+      dlopen(RunnerAXRuntimePath.UTF8String, RTLD_NOW);
+      dlopen(RunnerXCTAutomationSupportPath.UTF8String, RTLD_NOW);
+      element = objc_lookUpClass("AXElement");
+    }
+    cached = (Class<AgentDeviceForegroundElement>)element;
+    resolved = YES;
+  }
+  return cached;
+}
+
+// One contained probe: it checks each selector before sending it and reads the target pid, the
+// primary app's frame, and the system app's frame inside one exception scope, so any failed read
+// answers Unknown — the same typed nothing-a-guess the decision seam already reports. The target
+// pid comes from the existing runner owner for that read (RunnerAXSnapshotBridge), which picks the
+// correctly sized send for the pid_t return through the method signature.
+static RunnerFullScreenEvidence RunnerProbeApplicationFillsScreen(id application) {
+  if (application == nil) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  Class<AgentDeviceForegroundElement> element = RunnerForegroundElementClass();
+  if (element == Nil) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  if (![element respondsToSelector:@selector(primaryApp)] ||
+      ![element respondsToSelector:@selector(systemApplication)]) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  __block pid_t targetProcessID = 0;
+  __block pid_t primaryProcessID = 0;
+  __block CGRect window = CGRectNull;
+  __block CGRect screen = CGRectNull;
+  NSString *exception = [RunnerObjCExceptionCatcher catchException:^{
+    id<AgentDeviceForegroundElement> primaryApp = [element primaryApp];
+    id<AgentDeviceForegroundElement> systemApp = [element systemApplication];
+    if (primaryApp == nil || systemApp == nil ||
+        ![primaryApp respondsToSelector:@selector(pid)] ||
+        ![primaryApp respondsToSelector:@selector(frame)] ||
+        ![systemApp respondsToSelector:@selector(frame)]) {
+      return;
+    }
+    targetProcessID = (pid_t)[RunnerAXSnapshotBridge
+      processIdentifierForApplication:(XCUIApplication *)application];
+    primaryProcessID = [primaryApp pid];
+    window = [primaryApp frame];
+    screen = [systemApp frame];
+  }];
+  if (exception != nil) {
+    return RunnerFullScreenEvidenceUnknown;
+  }
+  return RunnerFullScreenEvidenceFromForeground(targetProcessID, primaryProcessID, window, screen);
+}
+
+#endif
+
+NSString * _Nullable RunnerResolveSoleScreen(
+  id application,
+  id _Nullable *screen,
+  NSUInteger *displayID
+) {
   *screen = nil;
 #if TARGET_OS_IOS
-  // Only an iPhone keeps every app full-screen; an iPad can show one in part of its only screen.
-  if (UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone) {
-    return @"private XCTest event synthesis unavailable: no resolved application window, and only an iPhone routes to its sole screen";
-  }
-#else
-  return @"private XCTest event synthesis unavailable: no resolved application window";
-#endif
   __block NSUInteger screenCount = 0;
   __block NSUInteger readDisplayID = 0;
   __block XCUIScreen *soleScreen = nil;
@@ -254,9 +345,20 @@ NSString * _Nullable RunnerResolveSoleScreen(id _Nullable *screen, NSUInteger *d
     );
     return @"private XCTest event synthesis unavailable: no resolved application window and no sole screen to route to";
   }
+  // An iPhone keeps every app full-screen, so its idiom answers the rule and the route never pays
+  // for the probe. Off the phone idiom the route opens only on the fills-screen proof — an iPad can
+  // show an app in part of its only screen — and windowed or unknown evidence keeps requiring a
+  // window. The probe answers only what it proved or failed to prove, never "not probed".
+  if (UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone &&
+      RunnerProbeApplicationFillsScreen(application) != RunnerFullScreenEvidenceFillsScreen) {
+    return @"private XCTest event synthesis unavailable: no resolved application window, and the sole screen is not provably the app's full-screen frame";
+  }
   *screen = soleScreen;
   *displayID = readDisplayID;
   return nil;
+#else
+  return @"private XCTest event synthesis unavailable: no resolved application window";
+#endif
 }
 
 NSString * _Nullable RunnerResolveWindowDisplayID(id window, NSUInteger *displayID) {
@@ -265,7 +367,7 @@ NSString * _Nullable RunnerResolveWindowDisplayID(id window, NSUInteger *display
     NSValue *frameValue = [window valueForKey:@"frame"];
     [frameValue getValue:&frame size:sizeof(frame)];
   }];
-  if (frameException != nil || !RunnerUsableWindowFrame(frame)) {
+  if (frameException != nil || !AgentDeviceForegroundFrameIsMeasurable(frame)) {
     NSLog(
       @"AGENT_DEVICE_RUNNER_APP_SCREEN_UNRESOLVED stage=window frame=(%g,%g %gx%g) raised=%@",
       frame.origin.x,

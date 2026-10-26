@@ -9,6 +9,9 @@ import { stripSwiftComments } from './strip-swift-comments.mjs';
 export const UNIT_TEST_CONDITION = 'AGENT_DEVICE_RUNNER_UNIT_TESTS';
 const SOURCE_DIR = path.join('apple', 'runner');
 const OUTPUT_DIR = path.join('dist', 'apple', 'runner');
+// The UITests target finds the bridge's shared full-screen header through HEADER_SEARCH_PATHS,
+// which resolves `apple/snapshot-bridge` from the runner project in both the checkout and the
+// installed package (the package ships that directory at its root). Nothing is mirrored.
 const SNAPSHOT_PRESENTATION_SOURCE_DIR = path.join('apple', 'snapshot-presentation');
 const SNAPSHOT_PRESENTATION_OUTPUT_DIR = path.join('dist', 'apple', 'snapshot-presentation');
 const SNAPSHOT_PRESENTATION_RUNNER_MANIFEST = 'Package.runner.swift';
@@ -27,6 +30,9 @@ const SNAPSHOT_PRESENTATION_DEVELOPMENT_DIR_NAMES = new Set([
 const LEGACY_OUTPUT_DIRS = [
   path.join('dist', 'apple-runner'),
   path.join('dist', 'apple', 'apple-runner'),
+  // A short-lived build mirrored the shared header beside the packaged runner; the UITests target
+  // finds it through HEADER_SEARCH_PATHS now, so a leftover copy must not double-ship.
+  path.join('dist', 'apple', 'snapshot-bridge'),
 ];
 const SKIPPED_DIR_NAMES = new Set(['.build', '.swiftpm', 'UnitTests', 'xcuserdata']);
 const SKIPPED_ROOT_FILES = new Set(['README.md', 'RUNNER_PROTOCOL.md']);
@@ -203,6 +209,12 @@ function processIncludedEntry(entry, sourceDir, outputDir, relativePath, summary
 }
 
 function processFile(sourcePath, outputPath, relativePath, summary, options) {
+  if (
+    options.trackNativeSources &&
+    (path.extname(sourcePath) === '.m' || path.extname(sourcePath) === '.h')
+  ) {
+    summary.packagedNativeSourcePaths.push(outputPath ?? sourcePath);
+  }
   if (outputPath) {
     copyFile(sourcePath, outputPath, relativePath, summary, options);
     return;
@@ -211,7 +223,8 @@ function processFile(sourcePath, outputPath, relativePath, summary, options) {
 }
 
 function copyFile(sourcePath, outputPath, relativePath, summary, options) {
-  if (path.extname(sourcePath) !== '.swift') {
+  const extension = path.extname(sourcePath);
+  if (extension !== '.swift') {
     fs.copyFileSync(sourcePath, outputPath);
     summary.copiedFiles += 1;
     return;

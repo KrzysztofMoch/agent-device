@@ -50,10 +50,13 @@ extension RunnerTests {
     }
   }
 
-  /// Only an iPhone with one screen can skip the windows query after the tree rejected one; anywhere
-  /// else the windows query is still asked, and its window carries the tap.
+  /// After the tree rejects a query, `back` reaches the top-leading control through whichever route
+  /// is open: the sole screen where the app proves it fills it (both families here), the resolved
+  /// window everywhere else. The refusal half on a real device is
+  /// `testSoleScreenDisplayIDIsNamedOnlyForAnAppThatFillsItsScreen` and the unprovable-foreground
+  /// test below, which stand where no simulator here can: its foreground app always fills its screen.
   @MainActor
-  func testInAppBackStillAsksForWindowsWhereNoSoleScreenAnswers() throws {
+  func testInAppBackAfterARejectedQueryTapsThroughTheRouteThatOpens() throws {
     let status = try launchBackFixture(["--agent-device-back-regression"])
     defer { endBackFixture() }
 
@@ -67,8 +70,61 @@ extension RunnerTests {
     XCTAssertEqual(status.label, "Back performed")
   }
 
+  /// The window route the sole-screen rule leaves when the probe cannot prove the fill: with the
+  /// probe's primary-app read stubbed to answer nothing (the evidence seam's `unknown`), the route
+  /// closes, and a rejected tree still dispatches `back` through the resolved window. An iPhone
+  /// keeps the sole-screen route by idiom — it answers before the probe is ever asked, so no stub
+  /// can close it there and the window route is the off-phone half's own. Real windowed geometry
+  /// needs an iPad set to Windowed Apps, which no lane runs; `unknown` closes the same route for
+  /// the same reason — the fill is not proven.
+  @MainActor
+  func testInAppBackAfterARejectedQueryWithUnprovableForegroundTapsThroughTheWindow() throws {
+    let status = try launchBackFixture(["--agent-device-back-regression"])
+    defer { endBackFixture() }
+    // Runs the real probe once, which is also what registers the AXRuntime class this seam stubs.
+    XCTAssertTrue(soleScreenRouteIsOpen(for: app))
+    guard UIDevice.current.userInterfaceIdiom != .phone else {
+      return
+    }
+    let restoreProbe = stubForegroundPrimaryAppAsUnprovable()
+    defer { restoreProbe() }
+    XCTAssertFalse(
+      soleScreenRouteIsOpen(for: app),
+      "an iPad whose app the probe cannot prove keeps requiring a resolved window"
+    )
+
+    let outcome = try withRejectedAppTree(framesReadable: true, rejections: 1) {
+      tapInAppBackControl(app: app)
+    }
+    guard case .performed = outcome else {
+      return XCTFail("a refused sole-screen route must still dispatch back through the resolved window")
+    }
+    XCTAssertEqual(status.label, "Back performed")
+  }
+
+  /// Stands in for a device showing the app in part of its screen as far as the probe can tell: the
+  /// probe's `primaryApp` read answers nothing, which the evidence seam reports as `unknown`. The
+  /// windowed geometry itself needs an iPad set to Windowed Apps, which no lane runs; `unknown`
+  /// closes the same route for the same reason — the fill is not proven.
+  private func stubForegroundPrimaryAppAsUnprovable() -> () -> Void {
+    let element = NSClassFromString("AXElement")
+    let method = element.flatMap { class_getClassMethod($0, NSSelectorFromString("primaryApp")) }
+    guard let method else {
+      preconditionFailure("AXRuntime did not register AXElement before the probe seam was stubbed")
+    }
+    let original = method_getImplementation(method)
+    let replacement = imp_implementationWithBlock(
+      { (_: AnyObject) -> AnyObject? in nil } as @convention(block) (AnyObject) -> AnyObject?
+    )
+    method_setImplementation(method, replacement)
+    return {
+      method_setImplementation(method, original)
+      imp_removeBlock(replacement)
+    }
+  }
+
   private var showsAppsOnlyFullScreen: Bool {
-    UIDevice.current.userInterfaceIdiom == .phone && XCUIScreen.screens.count == 1
+    soleScreenRouteIsOpen(for: app)
   }
 
   /// Launches the runner app; with `--agent-device-back-regression` it shows a top-leading back
@@ -180,21 +236,44 @@ extension RunnerTests {
   }
 #endif
 
-  /// A 402x874 iPhone's navigation bar spans y 62-116 and its back control 62-106.
+  /// The fallback point sits inside the top bar on both families, from the screen's own top inset:
+  /// an iPhone 17 Pro measures a 59-pt inset with its bar at y 62-116; an iPad Pro 11" measures 32
+  /// with its bar at y 32-86, where a frame-height fraction that serves the iPhone (0.1·874=87, and
+  /// the old clamp's 96 at any taller height) lands below the iPad's bar.
   func testTopLeadingNavigationFallbackPointTargetsHeaderControlBand() throws {
-    let point = try XCTUnwrap(
+    let iPhone = try XCTUnwrap(
       Self.topLeadingNavigationFallbackPoint(
-        in: CGRect(x: 0, y: 0, width: 402, height: 874)
+        in: CGRect(x: 0, y: 0, width: 402, height: 874),
+        topSafeAreaInset: 59
       )
     )
+    XCTAssertEqual(iPhone.x, 32.16, accuracy: 0.01)
+    XCTAssertEqual(iPhone.y, 81, accuracy: 0.01, "inside the iPhone bar band 62-116")
 
-    XCTAssertEqual(point.x, 32.16, accuracy: 0.01)
-    XCTAssertEqual(point.y, 87.4, accuracy: 0.01)
+    let iPad = try XCTUnwrap(
+      Self.topLeadingNavigationFallbackPoint(
+        in: CGRect(x: 0, y: 0, width: 834, height: 1210),
+        topSafeAreaInset: 32
+      )
+    )
+    XCTAssertEqual(iPad.x, 44, accuracy: 0.01, "the leading-slot cap keeps a tablet tap inside the bar")
+    XCTAssertEqual(iPad.y, 56, accuracy: 0.01, "inside the iPad bar band 32-86")
   }
 
   func testTopLeadingNavigationFallbackPointRejectsInvalidFrame() {
-    XCTAssertNil(Self.topLeadingNavigationFallbackPoint(in: .infinite))
-    XCTAssertNil(Self.topLeadingNavigationFallbackPoint(in: .zero))
+    XCTAssertNil(Self.topLeadingNavigationFallbackPoint(in: .infinite, topSafeAreaInset: 59))
+    XCTAssertNil(Self.topLeadingNavigationFallbackPoint(in: .zero, topSafeAreaInset: 59))
+  }
+
+  /// A runtime that reports no inset proves nothing about the band, so the point stays inside the
+  /// compact bar it used to target; a large inset (a surface that pushed the content down) must not
+  /// send the tap deep into the page.
+  func testTopLeadingNavigationFallbackPointStaysBoundedForUnknownAndLargeInsets() throws {
+    let frame = CGRect(x: 0, y: 0, width: 834, height: 1210)
+    let noInset = try XCTUnwrap(Self.topLeadingNavigationFallbackPoint(in: frame, topSafeAreaInset: 0))
+    XCTAssertEqual(noInset.y, 56, accuracy: 0.01, "the compact bar bound")
+    let hugeInset = try XCTUnwrap(Self.topLeadingNavigationFallbackPoint(in: frame, topSafeAreaInset: 400))
+    XCTAssertEqual(hugeInset.y, 96, accuracy: 0.01, "never leaves the header band")
   }
 
   func testNavigationBackControlRankPrefersBackThenCloseThenCancel() {
