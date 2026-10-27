@@ -6,6 +6,7 @@ import { test } from 'vitest';
 import { isCommandTimeoutError } from '@agent-device/host-kit/command';
 import { createSnapshotSourceHost } from './host.ts';
 import { buildSnapshotBridgeCompileArgv, ensureSnapshotBridgeBinary } from './cache.ts';
+import { SNAPSHOT_BRIDGE_SOURCE_FILENAMES } from './cache-identity.ts';
 import { SnapshotSourceError } from './errors.ts';
 import { createSnapshotSourceDeadline } from './deadline.ts';
 import { DEFAULT_SNAPSHOT_SOURCE_LIMITS } from './limits.ts';
@@ -149,6 +150,46 @@ test('the runtime clang build never uses -Werror', () => {
     outputPath: '',
   });
   assert.ok(!argv.includes('-Werror'));
+});
+
+test('the bridge source root resolves at the project root and otherwise reports native-source-missing', async () => {
+  const root = await mkdtempForTest('agent-device-snapshot-source-root-');
+  const bridgeRoot = path.join(root, 'apple', 'snapshot-bridge');
+  await mkdir(bridgeRoot, { recursive: true });
+  for (const name of SNAPSHOT_BRIDGE_SOURCE_FILENAMES) {
+    await writeFile(path.join(bridgeRoot, name), 'native source');
+  }
+  const host = createFakeBuildHost('binary');
+  const options = {
+    host,
+    runtime: 'iOS 26.2',
+    limits: DEFAULT_SNAPSHOT_SOURCE_LIMITS,
+    deadline: testDeadline(),
+    cacheRoot: path.join(root, 'cache'),
+  };
+
+  try {
+    const prepared = await ensureSnapshotBridgeBinary({
+      ...options,
+      host: { ...host, projectRoot: () => root },
+    });
+    assert.ok(prepared.path);
+
+    await assert.rejects(
+      ensureSnapshotBridgeBinary({
+        ...options,
+        host: { ...host, projectRoot: () => path.join(root, 'empty') },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof SnapshotSourceError);
+        assert.equal(error.failureKind, 'unsupported');
+        assert.equal(error.failureCode, 'native-source-missing');
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('concurrent snapshot bridge preparation publishes one cache entry', async () => {
