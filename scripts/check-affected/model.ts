@@ -19,6 +19,7 @@
 // non-.ts fixture whose owning suite cannot be derived). Existing GitHub CI
 // remains authoritative; this only optimizes local/agent feedback.
 
+import nativeDupesConfig from '../../.jscpd-native.json' with { type: 'json' };
 import { WIRE_SURFACE_FILES } from '../../test/wire-compat/surface.ts';
 import { deviceLaneOwnership } from './device-lanes.ts';
 
@@ -38,6 +39,8 @@ export const ALL_CHECKS = [
   'layering',
   'di-seams',
   'fallow',
+  'native-dupes',
+  'native-dupes-model',
   'mcp-metadata',
   'build',
   'package',
@@ -138,6 +141,8 @@ const ROOT_TOOLING = new Set([
   'tsdown.config.ts',
   'vitest.config.ts',
   '.fallowrc.json',
+  '.jscpd-native.json',
+  'native-dupes-baseline.json',
   'oxlint.config.ts',
   '.oxfmtrc.json',
   '.npmrc',
@@ -391,6 +396,18 @@ const ownsAppleRunnerBuildSource = (file: string): boolean =>
   (file.startsWith('packages/platform-apple/src/runner/') && !file.includes('/__tests__/')) ||
   file.endsWith('.swift');
 
+const nativeDupesOwnership: OwnershipRule = ({ file }) =>
+  nativeDupesConfig.path.some((root) => file.startsWith(`${root}/`))
+    ? [
+        reason(
+          'native-dupes',
+          file,
+          'own:native-dupes',
+          'jscpd compares native code against the clone baseline',
+        ),
+      ]
+    : [];
+
 const BUILD_OWNERSHIP: ReadonlyArray<{
   check: CheckId;
   rule: string;
@@ -633,6 +650,7 @@ const OWNERSHIP_RULES: readonly OwnershipRule[] = [
   replayCompatOwnership,
   daemonWireCompatOwnership,
   buildOwnership,
+  nativeDupesOwnership,
   deviceLaneRule,
 ];
 
