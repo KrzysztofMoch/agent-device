@@ -24,7 +24,7 @@ extension RunnerTests {
 
     let outcome = try withRejectedAppTree(framesReadable: false) { tapInAppBackControl(app: app) }
 
-    guard showsAppsOnlyFullScreen else {
+    guard soleScreenRouteIsOpen(for: app) else {
       guard case .unavailable = outcome else {
         return XCTFail("without a window or a sole screen there is no route to tap")
       }
@@ -123,15 +123,15 @@ extension RunnerTests {
     }
   }
 
-  private var showsAppsOnlyFullScreen: Bool {
-    soleScreenRouteIsOpen(for: app)
-  }
-
-  /// Launches the runner app; with `--agent-device-back-regression` it shows a top-leading back
-  /// control whose press sets the returned status to "Back performed", and without it nothing there.
+  /// Launches the runner app and waits for its fixture surface. With
+  /// `--agent-device-back-regression` it shows a top-leading back control whose press sets the
+  /// returned status to "Back performed", and without it nothing there.
   @MainActor
-  private func launchBackFixture(_ arguments: [String]) throws -> XCUIElement {
-    app.launchArguments = arguments
+  private func launchBackFixture(
+    _ arguments: [String],
+    navigationBar: Bool = false
+  ) throws -> XCUIElement {
+    app.launchArguments = arguments + (navigationBar ? ["--navigation-bar"] : [])
     app.launch()
     mainOwned.app = app
     mainOwned.bundleId = "com.callstack.agentdevice.runner"
@@ -193,17 +193,11 @@ extension RunnerTests {
 
   @MainActor
   private func assertInAppBackDispatch(navigationBar: Bool) throws {
-    app.launchArguments = ["--agent-device-back-regression"] + (navigationBar ? ["--navigation-bar"] : [])
-    app.launch()
-    mainOwned.app = app
-    mainOwned.bundleId = "com.callstack.agentdevice.runner"
-    clearSnapshotXCTestChannelPenalty(reason: "navigation-test")
-    defer {
-      invalidateCachedTarget(reason: "unit_test_cleanup")
-      app.terminate()
-    }
-    let status = app.staticTexts["agent-device-back-status"]
-    XCTAssertTrue(status.waitForFixtureExistence(timeout: appExistenceTimeout))
+    let status = try launchBackFixture(
+      ["--agent-device-back-regression"],
+      navigationBar: navigationBar
+    )
+    defer { endBackFixture() }
     var xctestTaps = 0
     var restorations: [() -> Void] = []
     defer { restorations.reversed().forEach { $0() } }
@@ -366,91 +360,53 @@ extension RunnerTests {
     )
   }
 
-  func testNavigationVisualVerificationSeparatesNoChangeFromNoSample() {
+  func testNavigationVisualObservationSeparatesChangeFromRefusal() {
+    // A refused side makes the pair uncomparable, not "unchanged"; reading it as "unchanged" would
+    // let a capture that refused become the reason the `back` command claims no control exists.
+    // When both refuse, the later refusal names what the fallback last looked at before giving up.
+    typealias Sample = Result<Data, RunnerAppScreenCaptureFailure>
+    let refused: Sample = .failure(.unresolvedScreen)
+    let windowless: Sample = .failure(.unresolvedWindow)
+    let captured: Sample = .success(Data([1, 2, 3]))
+    let changed: Sample = .success(Data([1, 2, 4]))
+    let other: Sample = .success(Data([1]))
+
+    XCTAssertEqual(Self.navigationVisualObservation(before: captured, after: changed), .changed, "changed")
+    XCTAssertEqual(Self.navigationVisualObservation(before: captured, after: captured), .unchanged, "unchanged")
     XCTAssertEqual(
-      Self.navigationVisualObservation(before: Data([1, 2, 3]), after: Data([1, 2, 4])),
-      .changed
+      Self.navigationVisualObservation(before: refused, after: other),
+      .unobserved(refusal: .unresolvedScreen),
+      "before refused"
     )
     XCTAssertEqual(
-      Self.navigationVisualObservation(before: Data([1, 2, 3]), after: Data([1, 2, 3])),
-      .unchanged
+      Self.navigationVisualObservation(before: other, after: windowless),
+      .unobserved(refusal: .unresolvedWindow),
+      "after refused"
     )
-    // A missing sample is neither a change nor a no-change; treating it as "unchanged" would let a
-    // capture that refused become the reason the `back` command claims no control exists (#2728).
-    XCTAssertEqual(Self.navigationVisualObservation(before: nil, after: Data([1])), .unobserved)
-    XCTAssertEqual(Self.navigationVisualObservation(before: Data([1]), after: nil), .unobserved)
-    XCTAssertEqual(Self.navigationVisualObservation(before: nil, after: nil), .unobserved)
+    XCTAssertEqual(
+      Self.navigationVisualObservation(before: refused, after: windowless),
+      .unobserved(refusal: .unresolvedWindow),
+      "both refused: the later refusal wins"
+    )
   }
 
-  func testNavigationFallbackReportsTheRefusalItHitNotADefaultCode() {
-    // The refusal from the most recent sample wins, so the code names what the fallback last looked at
-    // before giving up; an earlier refusal is reported only when the later sample carried none (#2728).
-    let after = NavigationVisualSample(
-      data: nil,
-      refusalCode: "APP_SCREEN_WINDOW_UNRESOLVED",
-      refusalHint: "after hint"
-    )
-    let before = NavigationVisualSample(
-      data: nil,
-      refusalCode: "APP_SCREEN_UNRESOLVED",
-      refusalHint: "before hint"
-    )
-    let laterWins = Self.navigationFallbackErrorPayload(after: after, before: before)
-    XCTAssertEqual(laterWins.code, "APP_SCREEN_WINDOW_UNRESOLVED")
-    XCTAssertEqual(laterWins.hint, "after hint")
-
-    let onlyBefore = Self.navigationFallbackErrorPayload(
-      after: NavigationVisualSample(data: nil),
-      before: before
-    )
-    XCTAssertEqual(onlyBefore.code, "APP_SCREEN_UNRESOLVED")
-    XCTAssertEqual(onlyBefore.hint, "before hint")
-
-    // Neither side named a reason (unreachable on iOS): a real capture code, never a bare failure.
-    let unnamed = Self.navigationFallbackErrorPayload(
-      after: NavigationVisualSample(data: nil),
-      before: NavigationVisualSample(data: nil)
-    )
-    XCTAssertEqual(unnamed.code, "APP_SCREEN_UNRESOLVED")
-    XCTAssertTrue(unnamed.message.contains("unknown outcome"))
-  }
-
-  func testVerifyNavigationFallbackOutcomeReportsUnresolvedWindowWithoutSystemSurface() {
-    // The in-app `back` fallback ran its tap but the app resolved no window. It must name that refusal
-    // as an unknown outcome AND must not have sampled the system surface: capturing SpringBoard's home
-    // screen twice reads as "unchanged" and launders a wrong-process frame into "no back control
-    // exists" (#2728). This drives the SAME `navigationFallbackSample` production calls, handing it a
-    // system surface that fails the test if consulted — so reverting the fallback to sample SpringBoard
-    // (or dropping the refusal code) turns this red, which an inline `.never` re-creation could not.
-    var askedSystemSurface = false
-    let sample = Self.navigationFallbackSample(
-      resolvingApp: { .failure(.unresolvedWindow) },
-      systemSurface: {
-        askedSystemSurface = true
-        return .failure(.unresolvedWindow)
-      },
-      encoding: { _ in Data([1, 2, 3]) }
-    )
-    XCTAssertFalse(askedSystemSurface, "the in-app fallback samples the app only, never SpringBoard")
-
-    XCTAssertNil(sample.data)
-    XCTAssertEqual(sample.refusalCode, "APP_SCREEN_WINDOW_UNRESOLVED")
-
-    let observation = Self.navigationVisualObservation(before: sample.data, after: sample.data)
-    XCTAssertEqual(observation, .unobserved)
-
-    switch Self.inAppBackOutcome(observation: observation, before: sample, after: sample) {
+  func testNavigationFallbackReportsARefusalAsAnUnknownOutcome() {
+    // The unverified answer carries the typed refusal's code and hint and says the outcome is
+    // unknown — never the definitive "no back control" a refused capture would otherwise become.
+    switch Self.inAppBackOutcome(observation: .unobserved(refusal: .unresolvedWindow)) {
     case .unverified(let payload):
       XCTAssertEqual(payload.code, "APP_SCREEN_WINDOW_UNRESOLVED")
+      XCTAssertEqual(payload.hint, RunnerAppScreenCaptureFailure.unresolvedWindow.hint)
+      XCTAssertTrue(payload.message.contains("unknown outcome"))
     case .performed, .unavailable:
       XCTFail("a refused capture must report an unknown outcome, not 'no back control'")
     }
   }
 
   func testNavigationVisualSampleDistinguishesEncodedFrameFromRefusal() {
-    // The same capture entry point yields three different samples, and only the refusal ones may carry
-    // a code: an encoded frame is evidence, a resolved-but-unencodable image and a refusal are not
-    // (#2728). Reverting the mapping to a plain no-sample loses the reason a host keys on.
+    // The same capture entry point yields three different answers, and only the refusals carry a
+    // reason: an encoded frame is evidence, a resolved-but-unencodable image and a refusal are not.
+    // Reverting the mapping to a plain no-sample loses the code a host keys on.
     let captured = CapturedAppScreen(
       image: RunnerImage(),
       displayID: 3,
@@ -459,26 +415,18 @@ extension RunnerTests {
       pixelsPerPoint: 3
     )
 
-    let encoded = Self.navigationVisualSample(
-      from: .success(captured),
-      encoding: { _ in Data([7, 7]) }
+    XCTAssertEqual(
+      Self.navigationVisualSample(from: .success(captured), encoding: { _ in Data([7, 7]) }),
+      .success(Data([7, 7]))
     )
-    XCTAssertEqual(encoded.data, Data([7, 7]))
-    XCTAssertNil(encoded.refusalCode)
-
-    let unencodable = Self.navigationVisualSample(
-      from: .success(captured),
-      encoding: { _ in nil }
+    XCTAssertEqual(
+      Self.navigationVisualSample(from: .success(captured), encoding: { _ in nil }),
+      .failure(.unrenderableImage)
     )
-    XCTAssertNil(unencodable.data)
-    XCTAssertEqual(unencodable.refusalCode, "APP_SCREEN_CAPTURE_UNRENDERABLE")
-
-    let refused = Self.navigationVisualSample(
-      from: .failure(.unresolvedScreen),
-      encoding: { _ in Data([7, 7]) }
+    XCTAssertEqual(
+      Self.navigationVisualSample(from: .failure(.unresolvedScreen), encoding: { _ in Data([7, 7]) }),
+      .failure(.unresolvedScreen)
     )
-    XCTAssertNil(refused.data)
-    XCTAssertEqual(refused.refusalCode, "APP_SCREEN_UNRESOLVED")
   }
 }
 #endif
