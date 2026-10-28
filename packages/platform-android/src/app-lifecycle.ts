@@ -1,6 +1,7 @@
 import { AppError } from '@agent-device/kernel/errors';
 import type { AppStateRuntimeResult } from '@agent-device/contracts/app-state-runtime';
 import { Deadline, sleep } from '@agent-device/host-kit/retry';
+import { isCommandTimeoutError } from '@agent-device/host-kit/command';
 import type { AppsFilter } from '@agent-device/contracts/device';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { isDeepLinkTarget } from '@agent-device/contracts/command';
@@ -33,6 +34,11 @@ const ANDROID_LOCALHOST_URL_REVERSE_OWNER = 'localhost-url';
 const ANDROID_CLOSE_FOCUS_TIMEOUT_MS = 2_000;
 const ANDROID_CLOSE_FOCUS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_TIMEOUT_MS = 2_000;
+/**
+ * Bounds the exit of processes that ran before `am force-stop`. Their exit time grows with memory
+ * and device load, so this bound only catches a wedged device.
+ */
+const ANDROID_CLOSE_KILLED_EXIT_TIMEOUT_MS = 10_000;
 const ANDROID_CLOSE_PROCESS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_GONE_STABLE_MS = 150;
 
@@ -580,8 +586,16 @@ async function resolveAndroidPackageToEnd(
 }
 
 async function stopAndroidPackage(device: DeviceInfo, packageName: string): Promise<void> {
+  const killed = await readAndroidPackagePids(
+    device,
+    packageName,
+    ANDROID_CLOSE_PROCESS_TIMEOUT_MS,
+  );
+  if (!killed) {
+    throw androidPidofUnavailableError(packageName);
+  }
   await runAndroidShell(device, ['am', 'force-stop', packageName]);
-  const expired = await waitForAndroidPackageStopped(device, packageName);
+  const expired = await waitForAndroidPackageStopped(device, packageName, killed);
   if (expired) throw androidCloseTimeoutError(packageName, expired);
 }
 
@@ -625,36 +639,59 @@ async function killAndroidPackage(device: DeviceInfo, packageName: string): Prom
     });
   }
   if (process === 'unknown') {
-    throw new AppError('COMMAND_FAILED', `Could not read process state for ${packageName}`, {
-      reason: 'android-process-probe-unavailable',
-      hint: 'adb pidof did not answer; retry once the device is reachable.',
-    });
+    throw androidPidofUnavailableError(packageName);
   }
 }
 
-type AndroidStopFencePhase = 'foreground' | 'process';
+function androidPidofUnavailableError(packageName: string): AppError {
+  return new AppError('COMMAND_FAILED', `Could not read process state for ${packageName}`, {
+    reason: 'android-process-probe-unavailable',
+    hint: 'adb pidof did not answer; retry once the device is reachable.',
+  });
+}
 
-/** The fence that expired before the package stopped, or undefined once it stopped. */
+type AndroidStopFencePhase = 'foreground' | 'exit' | 'process';
+
+/**
+ * The fence that expired before the package stopped, or undefined once it stopped. `killed` holds
+ * the pids that ran before `am force-stop`; any other pid afterwards is a new process.
+ */
 async function waitForAndroidPackageStopped(
   device: DeviceInfo,
   packageName: string,
+  killed: ReadonlySet<string>,
 ): Promise<AndroidStopFencePhase | undefined> {
   if (!(await waitForAndroidPackageNotForeground(device, packageName))) return 'foreground';
+  if (!(await waitForAndroidKilledProcessesExit(device, packageName, killed))) return 'exit';
   if (!(await waitForAndroidPackageProcessGone(device, packageName))) return 'process';
   return undefined;
 }
 
+const ANDROID_CLOSE_TIMEOUTS: Record<
+  AndroidStopFencePhase,
+  { readonly message: string; readonly timeoutMs: number }
+> = {
+  foreground: {
+    message: 'remained foreground after close',
+    timeoutMs: ANDROID_CLOSE_FOCUS_TIMEOUT_MS,
+  },
+  exit: {
+    message: 'process that ran before close did not exit',
+    timeoutMs: ANDROID_CLOSE_KILLED_EXIT_TIMEOUT_MS,
+  },
+  process: {
+    message: 'process remained running after close',
+    timeoutMs: ANDROID_CLOSE_PROCESS_TIMEOUT_MS,
+  },
+};
+
 function androidCloseTimeoutError(packageName: string, phase: AndroidStopFencePhase): AppError {
-  const message =
-    phase === 'foreground'
-      ? `Android app ${packageName} remained foreground after close`
-      : `Android app ${packageName} process remained running after close`;
-  return new AppError('COMMAND_FAILED', message, {
+  const { message, timeoutMs } = ANDROID_CLOSE_TIMEOUTS[phase];
+  return new AppError('COMMAND_FAILED', `Android app ${packageName} ${message}`, {
     reason: 'android-app-close-timeout',
     phase,
     packageName,
-    timeoutMs:
-      phase === 'foreground' ? ANDROID_CLOSE_FOCUS_TIMEOUT_MS : ANDROID_CLOSE_PROCESS_TIMEOUT_MS,
+    timeoutMs,
   });
 }
 
@@ -683,6 +720,25 @@ async function probeBeforeDeadline<T>(
 async function readAndroidForegroundApp(device: DeviceInfo): Promise<AppStateRuntimeResult | null> {
   const foreground = await getAndroidAppState(device);
   return foreground.package ? foreground : null;
+}
+
+async function waitForAndroidKilledProcessesExit(
+  device: DeviceInfo,
+  packageName: string,
+  killed: ReadonlySet<string>,
+): Promise<boolean> {
+  if (killed.size === 0) return true;
+  const deadline = Deadline.fromTimeoutMs(ANDROID_CLOSE_KILLED_EXIT_TIMEOUT_MS);
+  while (!deadline.isExpired()) {
+    const pids = await probeBeforeDeadline(deadline, () =>
+      readAndroidPackagePids(device, packageName, deadline.remainingMs()),
+    );
+    if (!pids) break;
+    if (!pids.value) throw androidPidofUnavailableError(packageName);
+    if (![...pids.value].some((pid) => killed.has(pid))) return true;
+    await sleep(ANDROID_CLOSE_PROCESS_POLL_MS);
+  }
+  return false;
 }
 
 async function waitForAndroidPackageProcessGone(
@@ -714,13 +770,31 @@ async function readAndroidPackageProcessState(
   device: DeviceInfo,
   packageName: string,
 ): Promise<'running' | 'gone' | 'unknown'> {
-  const result = await runAndroidShell(device, ['pidof', packageName], {
-    allowFailure: true,
-  });
-  if ((result.stdout ?? '').trim().length > 0) return 'running';
-  // `pidof` exits 1 with empty streams when no process matches.
-  if ((result.exitCode === 0 || result.exitCode === 1) && (result.stderr ?? '').trim() === '') {
-    return 'gone';
+  const pids = await readAndroidPackagePids(device, packageName);
+  if (!pids) return 'unknown';
+  return pids.size > 0 ? 'running' : 'gone';
+}
+
+/** The package's running pids, or undefined when `pidof` did not answer with a pid list in time. */
+async function readAndroidPackagePids(
+  device: DeviceInfo,
+  packageName: string,
+  timeoutMs?: number,
+): Promise<Set<string> | undefined> {
+  let result: AndroidAdbExecutorResult;
+  try {
+    result = await runAndroidShell(device, ['pidof', packageName], {
+      allowFailure: true,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
+  } catch (error) {
+    if (isCommandTimeoutError(error)) return undefined;
+    throw error;
   }
-  return 'unknown';
+  if ((result.stderr ?? '').trim() !== '') return undefined;
+  const pids = (result.stdout ?? '').trim();
+  if (result.exitCode === 0 && /^\d+(\s+\d+)*$/.test(pids)) return new Set(pids.split(/\s+/));
+  // `pidof` exits 1 with empty streams when no process matches.
+  if ((result.exitCode === 0 || result.exitCode === 1) && pids === '') return new Set();
+  return undefined;
 }
