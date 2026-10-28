@@ -15,10 +15,11 @@ import {
   normalizeAgentBrowserAudioProbeResult,
 } from './agent-browser-audio-probe.ts';
 import { normalizeAgentBrowserNetworkRequests } from './agent-browser-network.ts';
-import { normalizeAgentBrowserSnapshot } from './agent-browser-snapshot.ts';
+import { normalizeAgentBrowserSnapshot, type FrameContentInset } from './agent-browser-snapshot.ts';
 import {
   isJsonObject,
   readNumberProperty,
+  readProperty,
   readStringProperty,
   type JsonObject,
 } from './json-utils.ts';
@@ -265,13 +266,19 @@ async function movePointer(send: AgentBrowserSend, x: number, y: number): Promis
 }
 
 async function captureAgentBrowserSnapshot(
-  runJson: (args: string[], run?: AgentBrowserRunOptions) => Promise<unknown>,
+  runJson: AgentBrowserRunJson,
   options: WebSnapshotOptions | undefined,
 ): Promise<WebSnapshotResult> {
   const data = await runJson(buildSnapshotArgs(options));
   return await normalizeAgentBrowserSnapshot(
     data,
-    options?.includeRects ? (refs) => fetchRefRects(runJson, refs) : undefined,
+    options?.includeRects
+      ? {
+          rects: (refs) => fetchRefRects(runJson, refs),
+          frameContentInsets: (frameRefs) =>
+            readRefsInBatches(runJson, frameRefs, 'styles', parseFrameContentInset),
+        }
+      : undefined,
   );
 }
 
@@ -297,29 +304,31 @@ function buildSnapshotArgs(options: WebSnapshotOptions | undefined): string[] {
  * is a DOM read of an already-loaded page rather than an interpreter boot. Raising the number is safe
  * only while that ratio holds — the stdin payload itself (~23 bytes per ref) is not the constraint.
  */
-const MAX_REFS_PER_RECT_BATCH = 200;
+const MAX_REFS_PER_BATCH = 200;
+
+type AgentBrowserRunJson = (args: string[], run?: AgentBrowserRunOptions) => Promise<unknown>;
 
 /**
- * The bounds of every ref of the capture, in `batch` round trips: the backend measures them inside
+ * One `get <property>` read for every ref, in `batch` round trips: the backend reads them inside
  * one process, where the per-ref alternative pays one spawn per ref (measured on a 408-ref page: one
  * capture cost 385 spawns and 90 s, and 4 spawns and 0.3 s batched).
  *
- * A ref the backend could not measure comes back as a failed entry and simply gets no rect — an
- * element that is absent or has no box is an ordinary answer, and the entry's own `success` field is
- * what distinguishes it, never the error wording. `--bail` is deliberately not requested: it stops
- * at the first failed entry, which would silently drop the geometry of every ref after it.
+ * A ref the backend could not read comes back as a failed entry and is simply absent from the map —
+ * an element that is absent or has no box is an ordinary answer, and the entry's own `success` field
+ * is what distinguishes it, never the error wording. `--bail` is deliberately not requested: it stops
+ * at the first failed entry, which would silently drop the answer for every ref after it.
  */
-async function fetchRefRects(
-  runJson: (args: string[], run?: AgentBrowserRunOptions) => Promise<unknown>,
+async function readRefsInBatches<T>(
+  runJson: AgentBrowserRunJson,
   refs: readonly string[],
-): Promise<Map<string, Rect>> {
-  const rects = new Map<string, Rect>();
-  // A capture with no addressable node is an empty group list, so the loop below never runs and the
-  // backend is never called. That is the one place this seam declines to ask, and it is also what
-  // keeps such a capture from tripping the refusal: nothing failed, there was nothing to measure.
-  for (let start = 0; start < refs.length; start += MAX_REFS_PER_RECT_BATCH) {
-    const group = refs.slice(start, start + MAX_REFS_PER_RECT_BATCH);
-    const commands = group.map((ref) => ['get', 'box', browserRefSelector(ref)]);
+  property: 'box' | 'styles',
+  parse: (result: unknown) => T | undefined,
+): Promise<Map<string, T>> {
+  const values = new Map<string, T>();
+  // No refs is an empty group list, so the loop below never runs and the backend is never called.
+  for (let start = 0; start < refs.length; start += MAX_REFS_PER_BATCH) {
+    const group = refs.slice(start, start + MAX_REFS_PER_BATCH);
+    const commands = group.map((ref) => ['get', property, browserRefSelector(ref)]);
     const entries = parseBatchEntries(
       await runJson(['batch'], { stdin: JSON.stringify(commands) }),
       commands,
@@ -327,10 +336,20 @@ async function fetchRefRects(
     );
     for (const [index, entry] of entries.entries()) {
       const ref = group[index];
-      const rect = entry.success === true ? parseRect(entry.result) : undefined;
-      if (rect && ref !== undefined) rects.set(ref, rect);
+      const value = entry.success === true ? parse(entry.result) : undefined;
+      if (value !== undefined && ref !== undefined) values.set(ref, value);
     }
   }
+  return values;
+}
+
+async function fetchRefRects(
+  runJson: AgentBrowserRunJson,
+  refs: readonly string[],
+): Promise<Map<string, Rect>> {
+  // A capture with no addressable node asks nothing, which is also what keeps it from tripping the
+  // refusal below: nothing failed, there was nothing to measure.
+  const rects = await readRefsInBatches(runJson, refs, 'box', parseRect);
   if (refs.length > 0 && rects.size === 0) {
     // An element the backend CAN see measures as a box even when it is hidden or zero-sized, so a
     // capture whose every ref failed answered to a ref namespace the snapshot does not publish —
@@ -351,6 +370,34 @@ async function fetchRefRects(
     );
   }
   return rects;
+}
+
+/**
+ * The backend reports the box of a node inside an iframe against the viewport that frame renders
+ * into. The frame's border and padding are what separate that viewport from the frame's own box.
+ */
+function parseFrameContentInset(data: unknown): FrameContentInset | undefined {
+  const styles = readProperty(data, 'styles');
+  if (!isJsonObject(styles)) return undefined;
+  const left = sumPixelStyles(styles, ['border-left-width', 'padding-left']);
+  const top = sumPixelStyles(styles, ['border-top-width', 'padding-top']);
+  const right = sumPixelStyles(styles, ['border-right-width', 'padding-right']);
+  const bottom = sumPixelStyles(styles, ['border-bottom-width', 'padding-bottom']);
+  return left === undefined || top === undefined || right === undefined || bottom === undefined
+    ? undefined
+    : { left, top, right, bottom };
+}
+
+/** Computed border widths and paddings resolve to non-negative pixel lengths. */
+function sumPixelStyles(styles: JsonObject, keys: readonly string[]): number | undefined {
+  let total = 0;
+  for (const key of keys) {
+    const value = styles[key];
+    const pixels = typeof value === 'string' ? value.match(/^(\d+(?:\.\d+)?)px$/)?.[1] : undefined;
+    if (pixels === undefined) return undefined;
+    total += Number(pixels);
+  }
+  return total;
 }
 
 type AgentBrowserBatchEntry = {

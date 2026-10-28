@@ -1,3 +1,4 @@
+import { intersectRects } from '@agent-device/kernel/rect';
 import type { RawSnapshotNode, Rect } from '@agent-device/kernel/snapshot';
 import {
   isJsonObject,
@@ -46,15 +47,31 @@ const LABEL_ELEMENT_ROLES = new Set(['labeltext']);
  */
 export type SnapshotRectFetch = (refs: readonly string[]) => Promise<Map<string, Rect>>;
 
+/** The border and padding between an iframe's border box and the viewport its document renders into. */
+export type FrameContentInset = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * The content inset of every iframe ref asked for, in one call. A frame the backend could not
+ * measure is absent from the returned map.
+ */
+type FrameContentInsetFetch = (
+  frameRefs: readonly string[],
+) => Promise<Map<string, FrameContentInset>>;
+
+type SnapshotGeometryFetch = {
+  rects: SnapshotRectFetch;
+  frameContentInsets: FrameContentInsetFetch;
+};
+
 export async function normalizeAgentBrowserSnapshot(
   data: unknown,
-  fetchRects?: SnapshotRectFetch,
+  geometry?: SnapshotGeometryFetch,
 ): Promise<WebSnapshotResult> {
   const snapshotText = readStringProperty(data, 'snapshot') ?? '';
   const refs = collectSnapshotRefs(readProperty(data, 'refs'));
   const drafts = parseSnapshotDraftNodes(snapshotText, refs);
 
-  if (fetchRects) await attachDraftRects(drafts, fetchRects);
+  if (geometry) await attachDraftRects(drafts, geometry);
 
   return {
     // Preserve each draft's backend ref as the node's `ref`. agent-browser resolves
@@ -77,18 +94,89 @@ export async function normalizeAgentBrowserSnapshot(
 
 async function attachDraftRects(
   drafts: SnapshotDraftNode[],
-  fetchRects: SnapshotRectFetch,
+  geometry: SnapshotGeometryFetch,
 ): Promise<void> {
   // One fetch for the whole capture. A capture of nothing addressable still comes through, and the
   // fetcher decides not to call the backend for it: that decision belongs with the refusal below.
-  const rects = await fetchRects(
+  const rects = await geometry.rects(
     drafts.flatMap((draft) => (draft.ref === undefined ? [] : [draft.ref])),
   );
-  for (const draft of drafts) {
-    const ref = draft.ref;
-    const rect = ref === undefined ? undefined : rects.get(ref);
-    if (rect) draft.node.rect = rect;
+  const frameIndexes = drafts.map((draft) =>
+    findAncestorIndex(drafts, draft.node.parentIndex, isFrameDraft),
+  );
+  const frameRefs = [...new Set(frameIndexes.flatMap((index) => drafts[index ?? -1]?.ref ?? []))];
+  const insets =
+    frameRefs.length > 0
+      ? await geometry.frameContentInsets(frameRefs)
+      : new Map<string, FrameContentInset>();
+  // Drafts list a parent before its children, so each frame's viewport is known before its
+  // content is placed.
+  const frameViewports = new Map<number, FrameViewport>();
+  for (const [index, draft] of drafts.entries()) {
+    const measured = draft.ref === undefined ? undefined : rects.get(draft.ref);
+    const placed = measured && placeRect(measured, frameViewports, frameIndexes[index]);
+    if (!placed) continue;
+    draft.node.rect = placed.visible;
+    const inset = draft.ref === undefined ? undefined : insets.get(draft.ref);
+    const viewport = inset && frameViewport(placed, inset);
+    if (viewport) frameViewports.set(index, viewport);
   }
+}
+
+/** Where a node sits on the page, and the part of it the page shows. */
+type PlacedRect = { rect: Rect; visible: Rect };
+
+/** Where a frame's document renders on the page, and the part of it the page shows. */
+type FrameViewport = { origin: Rect; visible: Rect };
+
+/** The backend measures a node inside an iframe against that frame's viewport. */
+function placeRect(
+  measured: Rect,
+  frameViewports: ReadonlyMap<number, FrameViewport>,
+  frameIndex: number | undefined,
+): PlacedRect | undefined {
+  if (frameIndex === undefined) return { rect: measured, visible: measured };
+  // A frame whose position cannot be read leaves its content without a rect rather than with a
+  // wrong one.
+  const frame = frameViewports.get(frameIndex);
+  if (!frame) return undefined;
+  const rect = { ...measured, x: measured.x + frame.origin.x, y: measured.y + frame.origin.y };
+  // Content scrolled out of its frame has no point a press could reach: the page around the
+  // frame renders there instead.
+  const visible = intersectRects(rect, frame.visible);
+  return visible && { rect, visible };
+}
+
+/** Content lines up with the frame's unclipped viewport and shows only where the frame does. */
+function frameViewport(frame: PlacedRect, inset: FrameContentInset): FrameViewport | undefined {
+  const origin = {
+    x: frame.rect.x + inset.left,
+    y: frame.rect.y + inset.top,
+    width: frame.rect.width - inset.left - inset.right,
+    height: frame.rect.height - inset.top - inset.bottom,
+  };
+  const visible = intersectRects(origin, frame.visible);
+  return visible && { origin, visible };
+}
+
+function isFrameDraft(draft: SnapshotDraftNode): boolean {
+  return draft.node.type?.toLowerCase() === 'iframe';
+}
+
+/** The index of the nearest kept draft, from `parentIndex` upwards, that matches. */
+function findAncestorIndex(
+  drafts: readonly SnapshotDraftNode[],
+  parentIndex: number | undefined,
+  matches: (draft: SnapshotDraftNode) => boolean,
+): number | undefined {
+  let index = parentIndex;
+  while (index !== undefined) {
+    const draft = drafts[index];
+    if (!draft) return undefined;
+    if (matches(draft)) return index;
+    index = draft.node.parentIndex;
+  }
+  return undefined;
 }
 
 /** One snapshot line, with the node it reports when the backend issued a ref for it. */
@@ -204,14 +292,8 @@ function findAddressedAncestor(
   drafts: readonly SnapshotDraftNode[],
   parentIndex: number | undefined,
 ): SnapshotDraftNode | undefined {
-  let index = parentIndex;
-  while (index !== undefined) {
-    const draft = drafts[index];
-    if (!draft) return undefined;
-    if (draft.ref !== undefined) return draft;
-    index = draft.node.parentIndex;
-  }
-  return undefined;
+  const index = findAncestorIndex(drafts, parentIndex, (draft) => draft.ref !== undefined);
+  return index === undefined ? undefined : drafts[index];
 }
 
 /** The node a line reports: the addressable one parsed up front, or the ref-less text it carries. */
