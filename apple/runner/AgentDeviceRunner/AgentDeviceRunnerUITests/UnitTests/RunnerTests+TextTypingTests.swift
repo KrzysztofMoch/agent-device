@@ -459,6 +459,8 @@ extension RunnerTests {
     XCTAssertFalse(didRecordXCTestFailure(since: failureCountBefore))
     XCTAssertFalse(response.ok)
     XCTAssertEqual(response.error?.code, "TEXT_ENTRY_MISMATCH")
+    // A sensitive fill's value must not come back, and the observed text is an altered form of it.
+    XCTAssertEqual(response.error?.message, "text entry read-back did not match the requested text")
     XCTAssertEqual(app.textFields.count, 1)
     XCTAssertEqual(editableTextValue(for: app.textFields.element(boundBy: 0), treatingPlaceholderAsEmpty: true), "23456")
   }

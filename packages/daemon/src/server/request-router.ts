@@ -68,7 +68,10 @@ import {
   sensitiveFillPlaceholder,
 } from '@agent-device/ad-script';
 import { createPlatformRequestScope } from './platform-request-scope.ts';
-import { parameterizeSensitiveString } from '@agent-device/selectors/parameterized-recorded-fill';
+import {
+  parameterizeSensitiveString,
+  redactFillFailureReadBack,
+} from '@agent-device/selectors/parameterized-recorded-fill';
 import { isConfinedToAppLease, scopeRequestSession } from '../sessions/request-admission.ts';
 import { redactMacOsAppLeaseResponse } from '../resources/macos-app-lease.ts';
 import { resolveEffectiveSessionName } from '../sessions/session-routing.ts';
@@ -590,19 +593,25 @@ function registerParameterizedFillDiagnosticValue(req: DaemonRequest): void {
 const ERROR_TEXT_FIELDS: ReadonlySet<string> = new Set(['message', 'hint', 'cause', 'details']);
 
 /**
- * A backend error can quote the text a sensitive fill failed to type. Only that fill's own text is
+ * A backend error can quote the text a sensitive fill failed to type, or the altered text it read
+ * back, which `redactFillFailureReadBack` replaces whole. Only that fill's own text is otherwise
  * redacted, and only in the error's text fields: `logPath`, `diagnosticId` and the other
  * daemon-owned fields come back as they are, and so does every other request's error.
  */
 function redactSensitiveFillTextInError(req: DaemonRequest, error: DaemonError): DaemonError {
   const text = sensitiveFillText(req);
-  if (!text) return error;
+  if (text === undefined) return error;
   const placeholder = sensitiveFillPlaceholder(req.flags);
   const replace = (value: string) => parameterizeSensitiveString(value, text, placeholder);
   return Object.fromEntries(
     Object.entries(error).map(([field, value]) => [
       field,
-      ERROR_TEXT_FIELDS.has(field) ? mapErrorStrings(value, replace) : value,
+      ERROR_TEXT_FIELDS.has(field)
+        ? mapErrorStrings(
+            field === 'details' ? redactFillFailureReadBack(value, placeholder) : value,
+            replace,
+          )
+        : value,
     ]),
   ) as DaemonError;
 }
