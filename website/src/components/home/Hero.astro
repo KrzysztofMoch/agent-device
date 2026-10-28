@@ -1,0 +1,339 @@
+---
+// The home page hero, in one centred column: the motto in two beats, a lede, the install command
+// beside the GitHub stars and npm downloads, then the session on the loop scene: a tab per kind
+// of job (build, verify, profile), each the prompt a developer gives, every agent-device call the
+// agent makes as its own card with the output nested inside, and the agent's reply. Behind it
+// all, the dimmed loop scene. The sparkles above the fold span the page (index.astro).
+import CopyCommand from '../site/CopyCommand.astro';
+import Dither from '../site/Dither.astro';
+import GitHubStars from '../site/GitHubStars.astro';
+import PixelIcon from '../site/PixelIcon.astro';
+import { docs, jobs, site } from '../../site/content';
+import type { Line } from '../../site/content';
+import { compact, monthlyDownloads } from '../../site/npm';
+
+const downloads = await monthlyDownloads();
+
+// Each command starts a tool call; the lines after it, up to the next command, are its output.
+const calls = (lines: Line[]) =>
+  lines.reduce<{ args: string; out: Line[] }[]>((acc, l) => {
+    if (l.kind === 'cmd') acc.push({ args: l.text.replace(/^agent-device /, ''), out: [] });
+    else acc.at(-1)?.out.push(l);
+    return acc;
+  }, []);
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-bg" aria-hidden="true">
+    <Dither scene="loop" focus={0.5} />
+  </div>
+  <div class="hero-top hero-center">
+    <h1 class="h1" id="hero-title">{site.headline[0]} <em>{site.headline[1]}</em></h1>
+    <p class="lede">{site.lede}</p>
+    <div class="actions">
+      <CopyCommand command={site.install} label="Install" />
+      <GitHubStars class="label stat" named />
+      {
+        downloads !== undefined && (
+          <a
+            class="label stat"
+            href={site.npm}
+            aria-label={`${downloads.toLocaleString('en')} npm downloads in the last 30 days`}
+          >
+            <PixelIcon name="package" size={14} />
+            <span>npm</span>
+            <span>{compact(downloads)}/mo</span>
+          </a>
+        )
+      }
+    </div>
+    <a class="label more" href={docs.intro}>Read the docs <span aria-hidden="true">→</span></a>
+  </div>
+
+  <div
+    class="viz"
+    data-hero
+    role="region"
+    aria-label="Prompts a developer gives a coding agent, and the agent-device commands the agent runs for each"
+  >
+    <!-- The tabs need hero.ts; without scripts the first job stays as a still frame. -->
+    <noscript><style is:inline>.jobs-tabs { display: none; }</style></noscript>
+    <!-- HERO VISUAL -->
+    <div class="rig">
+      <div class="session">
+        <div class="jobs-tabs" role="tablist" aria-label="Job">
+          {
+            jobs.map((j, i) => (
+              <button class="label jobs-tab" role="tab" id={`job-tab-${j.id}`} aria-controls={`job-${j.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-job-tab>
+                {j.name}
+              </button>
+            ))
+          }
+        </div>
+        <div class="jobs">
+        {
+          jobs.map((j, i) => (
+            <div class="job" role="tabpanel" id={`job-${j.id}`} aria-labelledby={`job-tab-${j.id}`} hidden={i !== 0} data-job>
+              <div class="prompt" data-step>
+                <span class="label who">You</span>
+                <p>{j.prompt}</p>
+              </div>
+              <ol class="calls">
+                {calls(j.transcript).map((c) => (
+                  <li class="call" data-step>
+                    <span class="label tool">agent-device</span>
+                    <code class="args">{c.args}</code>
+                    {c.out.length > 0 && (
+                      <div class="out">
+                        {c.out.map((l) => (
+                          <div class={`ln ${l.kind}`}>{l.text}</div>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+              <div class="reply" data-step>
+                <span class="label who">Agent</span>
+                <p>{j.reply}</p>
+              </div>
+            </div>
+          ))
+        }
+        </div>
+      </div>
+    </div>
+    <!-- /HERO VISUAL -->
+  </div>
+</section>
+
+<script>
+  // The animation code loads only when the hero first nears the viewport.
+  import { whenNear } from '../site/lazy';
+
+  const root = document.querySelector<HTMLElement>('[data-hero]');
+  if (root) whenNear(root, () => void import('./hero').then((m) => m.default(root)));
+</script>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+  }
+  /* One scene behind the copy and the session, so it rises above the fold. */
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  /* Starts below the headline, so the main track sits just above the tabs; the top edge fades
+     out under the lede. The height follows the width, not the session, so switching tabs never
+     resizes the scene. */
+  .hero-bg :global(.dither) {
+    inset: 22rem 0 auto;
+    height: auto;
+    aspect-ratio: 8 / 5;
+    min-height: 36rem;
+    opacity: 0.45;
+    mask-image: linear-gradient(to bottom, transparent, #000 16rem);
+  }
+  .hero-top,
+  .viz {
+    position: relative;
+  }
+  .viz {
+    border-top: 0;
+  }
+  .hero-center {
+    justify-items: center;
+    gap: 1.25rem;
+    padding-block: clamp(2.5rem, 5vw, 4rem) clamp(2rem, 4vw, 3rem);
+    text-align: center;
+  }
+  .hero-center .lede {
+    max-width: 44rem;
+    text-wrap: balance;
+  }
+  .hero-center .actions {
+    justify-content: center;
+    margin-top: 0.5rem;
+  }
+  .hero-center .actions :global(.cmd) {
+    width: min(100%, 27rem);
+  }
+  .hero-center :global(.stat) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.625rem;
+    padding-inline: 0.875rem;
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--muted);
+    text-decoration: none;
+    white-space: nowrap;
+    transition:
+      color 120ms,
+      border-color 120ms;
+  }
+  .hero-center :global(.stat:hover) {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .hero-center :global(.stat svg) {
+    color: var(--accent);
+  }
+  .rig {
+    position: relative;
+    display: flex;
+    gap: var(--pad);
+    align-items: center;
+    justify-content: center;
+    padding: clamp(1.5rem, 3vw, 2.5rem) var(--pad) clamp(2rem, 5vw, 3.5rem);
+  }
+  .session {
+    flex: 0 1 42rem;
+    min-width: 0;
+  }
+  .jobs-tabs {
+    display: flex;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+  }
+  .jobs-tab {
+    flex: 1 1 0;
+    padding: 0.75rem 1rem;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-right: 1px solid var(--line-strong);
+    cursor: pointer;
+  }
+  .jobs-tab:last-child {
+    border-right: 0;
+  }
+  .jobs-tab[aria-selected='true'] {
+    color: var(--on-accent);
+    background: var(--accent);
+  }
+  /* The panels share one cell, so the session is as tall as the tallest job and switching tabs
+     never moves the page below. */
+  .jobs {
+    display: grid;
+    margin-top: 0.75rem;
+  }
+  .job {
+    grid-area: 1 / 1;
+    display: grid;
+    gap: 0.75rem;
+    align-content: start;
+  }
+  .job[hidden] {
+    display: grid;
+    visibility: hidden;
+  }
+  .prompt {
+    display: grid;
+    gap: 0.375rem;
+    justify-self: end;
+    max-width: 85%;
+    padding: 0.875rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+  }
+  .prompt p {
+    margin: 0;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .who {
+    color: var(--accent);
+  }
+  /* The agent's answer: what it brings back, the counterpart of the prompt. */
+  .reply {
+    display: grid;
+    gap: 0.375rem;
+    justify-self: start;
+    max-width: 85%;
+    padding: 0.875rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-left: 2px solid var(--accent);
+  }
+  .reply p {
+    margin: 0;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .calls {
+    display: grid;
+    gap: 0.375rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .call {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.25rem 0.75rem;
+    align-items: baseline;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+  .tool {
+    color: var(--accent);
+    text-transform: none;
+  }
+  .args {
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .out {
+    grid-column: 2;
+    color: var(--muted);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .out .add {
+    color: var(--accent);
+  }
+  .out .del {
+    color: var(--faint);
+  }
+  [data-step].is-hidden {
+    visibility: hidden;
+  }
+  [data-step].is-in {
+    animation: step-in 0.2s steps(3, end);
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+  @media (max-width: 64rem) {
+    /* Too narrow for two across: the pictures stack. */
+    .rig {
+      flex-direction: column;
+    }
+    .session {
+      flex: none;
+      width: 100%;
+    }
+    .prompt,
+    .reply {
+      max-width: none;
+    }
+    .call {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .out {
+      grid-column: 1;
+    }
+  }
+</style>

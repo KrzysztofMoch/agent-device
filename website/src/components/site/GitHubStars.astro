@@ -1,0 +1,96 @@
+---
+// The GitHub link with the repository's star count, top right in the landing and docs headers.
+// The count is baked in when the site is built, so it renders at once and without scripts. Once
+// the page is idle, the browser refreshes it from the GitHub API, at most once per session every
+// ten minutes (sessionStorage). A refusal is remembered as long, and the built figure stays.
+import { site } from '../../site/content';
+import { buildStars, formatStars, starsApi } from '../../site/github';
+import PixelIcon from './PixelIcon.astro';
+
+interface Props {
+  class?: string;
+  /** Writes "GitHub" before the count, for places where the star alone does not say where it links. */
+  named?: boolean;
+}
+const { class: className, named = false } = Astro.props;
+const stars = await buildStars(site.repo);
+const label = `${site.name} on GitHub`;
+---
+
+<a
+  class:list={['gh-stars', className]}
+  href={site.repo}
+  data-stars-api={starsApi(site.repo)}
+  data-stars-label={label}
+  aria-label={stars === undefined ? label : `${label}, ${stars.toLocaleString('en')} stars`}
+>
+  <PixelIcon name="star" size={14} />
+  {named && <span>GitHub</span>}
+  <span data-stars-count>{stars === undefined ? (named ? '' : 'GitHub') : formatStars(stars)}</span>
+</a>
+
+<script>
+  import { formatStars, readStars } from '../../site/github';
+
+  const KEY = 'agent-device:github-stars';
+  const FRESH = 10 * 60_000;
+  const links = [...document.querySelectorAll<HTMLAnchorElement>('[data-stars-api]')];
+
+  const show = (stars: number) => {
+    for (const link of links) {
+      const count = link.querySelector('[data-stars-count]');
+      if (count) count.textContent = formatStars(stars);
+      link.setAttribute('aria-label', `${link.dataset.starsLabel}, ${stars.toLocaleString('en')} stars`);
+    }
+  };
+
+  /** The last answer while it is fresh: a count, or null when GitHub refused. */
+  type Saved = { stars: number | null; at: number };
+  const recent = (): Saved | undefined => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(KEY) ?? 'null') as Saved | null;
+      return saved && Date.now() - saved.at < FRESH ? saved : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const refresh = async (api: string) => {
+    const saved = recent();
+    if (saved) {
+      if (saved.stars !== null) show(saved.stars);
+      return;
+    }
+    const stars = await fetch(api, { headers: { accept: 'application/vnd.github+json' } })
+      .then(readStars)
+      .catch(() => undefined);
+    if (stars !== undefined) show(stars);
+    try {
+      sessionStorage.setItem(KEY, JSON.stringify({ stars: stars ?? null, at: Date.now() }));
+    } catch {
+      // Storage can be off (private windows); the next page asks again.
+    }
+  };
+
+  const api = links[0]?.dataset.starsApi;
+  if (api) (window.requestIdleCallback ?? setTimeout)(() => void refresh(api));
+</script>
+
+<style>
+  .gh-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    text-decoration: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  /* No count yet (the build could not read it): no empty box in the gap. */
+  [data-stars-count]:empty {
+    display: none;
+  }
+  .gh-stars svg {
+    flex: none;
+    color: var(--accent);
+  }
+</style>

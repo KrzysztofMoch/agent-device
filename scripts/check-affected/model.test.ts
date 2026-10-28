@@ -200,8 +200,8 @@ test('colocated Android binary fixtures select the unit suite instead of failing
   );
 });
 
-test('MCP metadata change selects the mcp-metadata check', () => {
-  assert.deepEqual(ids(['server.json']), ['mcp-metadata']);
+test('MCP metadata change selects the mcp-metadata check and the site build that serves it', () => {
+  assert.deepEqual(ids(['server.json']), ['mcp-metadata', 'docs-links']);
 });
 
 test('public package surface change selects the build and the published-package gate via exports', () => {
@@ -231,7 +231,11 @@ test('user docs pages and README select the docs-links and docs-prose checks', (
     assert.deepEqual(result.checks, ['docs-links', 'docs-prose'], file);
     assert.deepEqual(result.docsOnlyPaths, []);
   }
-  for (const file of ['website/package.json', 'website/rspress.config.ts']) {
+  for (const file of [
+    'website/package.json',
+    'website/astro.config.mjs',
+    'website/src/content.config.ts',
+  ]) {
     assert.deepEqual(plan([file]).checks, ['docs-links'], file);
   }
   assert.deepEqual(plan(['website/docs/docs/commands.md']).checks, [

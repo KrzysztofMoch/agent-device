@@ -1,9 +1,10 @@
-// `pnpm check:doc-links` — every internal link on the built docs site lands on a page and an
-// element ID that rspress actually rendered, and README.md's links into the published docs do too.
-// It reads website/doc_build after `pnpm --dir website build`, so rspress's own slugger, link
+// `pnpm check:doc-links` — every internal link on the built site lands on a page and an
+// element ID that Astro actually rendered, and README.md's links into the published docs do too.
+// It reads website/dist after `pnpm --dir website build`, so Starlight's own slugger, link
 // rewriting, and clean URLs are what get checked. External URLs are skipped (no network).
+// Every docs page also needs its Markdown twin (`docs/<page>.md`), which LLM clients fetch.
 //
-// The HTML is parsed with regexes on purpose: it is rspress's generated output, which always
+// The HTML is parsed with regexes on purpose: it is Astro's generated output, which always
 // writes attributes double-quoted with `&`, `"`, `<`, `>` entity-escaped, so `id="…"` and
 // `href="…"` cannot contain an unescaped quote.
 
@@ -12,12 +13,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
-const BUILD_DIR = path.join(REPO_ROOT, 'website/doc_build');
+const BUILD_DIR = path.join(REPO_ROOT, 'website/dist');
 const DOCS_SOURCE_DIR = 'website/docs';
-// README links to the published site, whose root is this URL whatever base a local build used.
-const PUBLISHED_SITE = 'https://oss.callstack.com/agent-device/';
-const README_DOCS_URL =
-  /https:\/\/oss\.callstack\.com\/agent-device\/docs\/[\w./-]*(?:#[\w%.-]+)?/g;
+// README links to the published site, whose root is this URL.
+const PUBLISHED_SITE = 'https://agent-device.dev/';
+const README_DOCS_URL = /https:\/\/agent-device\.dev\/docs\/[\w./-]*(?:#[\w%.-]+)?/g;
 
 export type DocLinkViolation = {
   /** Built page route (`docs/sessions`), or `README.md:<line>`. */
@@ -53,6 +53,15 @@ function listHtml(buildDir: string): string[] {
     .map((entry) => entry.split(path.sep).join('/'))
     .filter((entry) => entry.endsWith('.html'))
     .sort();
+}
+
+/** Every built docs page (`docs/x.html`) has its Markdown twin (`docs/x.md`). */
+function missingMarkdownTwins(buildDir: string, htmlFiles: readonly string[]): DocLinkViolation[] {
+  return htmlFiles
+    .filter((file) => file.startsWith('docs/'))
+    .map((file) => file.replace(/\.html$/, ''))
+    .filter((route) => !fs.existsSync(path.join(buildDir, `${route}.md`)))
+    .map((route) => ({ where: route, message: `no Markdown twin "${route}.md"` }));
 }
 
 function duplicateHeadingIds(route: string, html: string): DocLinkViolation[] {
@@ -133,7 +142,7 @@ function readmeViolations(site: Site, readmeText: string): DocLinkViolation[] {
 }
 
 /**
- * Check a built rspress site. `base` is the base it was built with, with leading and trailing
+ * Check a built site. `base` is the base it was built with, with leading and trailing
  * slashes (`/agent-device/`); internal hrefs start with it. README's URLs name the published site.
  */
 export function checkDocLinks(
@@ -142,8 +151,9 @@ export function checkDocLinks(
   base: string,
 ): DocLinkViolation[] {
   const pages = new Map<string, BuiltPage>();
-  const violations: DocLinkViolation[] = [];
-  for (const file of listHtml(buildDir)) {
+  const htmlFiles = listHtml(buildDir);
+  const violations = missingMarkdownTwins(buildDir, htmlFiles);
+  for (const file of htmlFiles) {
     const html = fs.readFileSync(path.join(buildDir, file), 'utf8');
     const ids = new Set(
       [...html.matchAll(ATTRIBUTE('id'))].map(([, id]) => decodeEntities(id ?? '')),
@@ -160,16 +170,15 @@ export function checkDocLinks(
 }
 
 /**
- * The base the site was built with, read from the build rather than restated: rspress emits its
- * entry script under `assetPrefix`, which defaults to `base` (rspress `initRsbuild.js`).
+ * The base the site was built with, read from the build rather than restated: Astro emits its
+ * assets under `<base>_astro/`.
  */
-function builtBase(buildDir: string): string {
+export function builtBase(buildDir: string): string {
   const home = fs.readFileSync(path.join(buildDir, 'index.html'), 'utf8');
-  const match = /<script defer src="(\/[^"]*?)static\/js\/index\.[\w]+\.js"/.exec(home);
-  const base = match?.[1];
+  const base = /\s(?:src|href)="(\/[^"]*?)_astro\//.exec(home)?.[1];
   // A wrong base would make every internal link look external and pass; the home link proves it.
   if (!base || !home.includes(`href="${base}"`)) {
-    throw new Error('doc links: cannot read the site base from doc_build/index.html.');
+    throw new Error('doc links: cannot read the site base from dist/index.html.');
   }
   return base;
 }
@@ -182,7 +191,7 @@ function sourceHint(where: string): string {
 function main(): number {
   if (!fs.existsSync(path.join(BUILD_DIR, 'index.html'))) {
     process.stderr.write(
-      'doc links: website/doc_build is missing; run `pnpm --dir website build` first.\n',
+      'doc links: website/dist is missing; run `pnpm --dir website build` first.\n',
     );
     return 1;
   }
@@ -197,7 +206,7 @@ function main(): number {
     process.stderr.write(`${where}: ${message}${sourceHint(where)}\n`);
   }
   process.stderr.write(
-    `doc links: ${violations.length} broken link(s) or duplicate heading ID(s).\n`,
+    `doc links: ${violations.length} broken link(s), duplicate heading ID(s) or missing Markdown twin(s).\n`,
   );
   return 1;
 }

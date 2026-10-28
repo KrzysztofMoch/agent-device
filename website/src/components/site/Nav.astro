@@ -1,0 +1,113 @@
+---
+// Sticky, blurred, a hairline under it: the lockup left, mono links centred, the GitHub stars and
+// the docs search right.
+// Below 52rem the links move into a Menu disclosure, which works without JavaScript.
+import { nav } from '../../site/content';
+import DocsSearch from './DocsSearch.astro';
+import GitHubStars from './GitHubStars.astro';
+import Lockup from './Lockup.astro';
+---
+
+<header class="nav">
+  <div class="frame nav-inner">
+    <Lockup />
+    <nav class="links" aria-label="Main">
+      {nav.map(({ text, href }) => <a class="label" href={href}>{text}</a>)}
+    </nav>
+    <details class="menu">
+      <summary class="label">Menu</summary>
+      <nav aria-label="Main">
+        {nav.map(({ text, href }) => <a class="label" href={href}>{text}</a>)}
+      </nav>
+    </details>
+    <GitHubStars class="label nav-stars" />
+    <DocsSearch />
+  </div>
+</header>
+
+<script>
+  // The Menu disclosure closes on a tap outside it or on Escape, like a menu.
+  for (const menu of document.querySelectorAll<HTMLDetailsElement>('details.menu')) {
+    addEventListener('click', (event) => {
+      if (menu.open && !menu.contains(event.target as Node)) menu.open = false;
+    });
+    addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !menu.open) return;
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+    });
+  }
+</script>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgb(10 10 10 / 0.86);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    min-height: 3.75rem;
+    padding-inline: var(--pad);
+  }
+  .links {
+    display: flex;
+    gap: 1.75rem;
+    margin-inline: auto;
+  }
+  .links a,
+  .menu a,
+  .menu summary,
+  .nav-inner > :global(.nav-stars) {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 120ms;
+  }
+  .links a:hover,
+  .menu a:hover,
+  .nav-inner > :global(.nav-stars:hover),
+  .menu summary:hover,
+  .menu[open] summary {
+    color: var(--text);
+  }
+  .menu {
+    display: none;
+    position: relative;
+  }
+  .menu summary {
+    padding-block: 0.5rem;
+    list-style: none;
+    cursor: pointer;
+  }
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .menu nav {
+    position: absolute;
+    top: calc(100% + 0.75rem);
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 12rem;
+    padding-block: 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+  }
+  .menu a {
+    padding: 0.75rem 1.25rem;
+  }
+  @media (max-width: 52rem) {
+    .links {
+      display: none;
+    }
+    .menu {
+      display: block;
+      margin-inline-start: auto;
+    }
+  }
+</style>

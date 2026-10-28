@@ -490,6 +490,12 @@ const BUILD_OWNERSHIP: ReadonlyArray<{
     detail: 'MCP registry metadata must stay in sync',
     owns: (file) => file === 'server.json' || file === 'smithery.yaml',
   },
+  {
+    check: 'docs-links',
+    rule: 'own:docs-links',
+    detail: 'the site builds /.well-known/mcp.json from server.json',
+    owns: (file) => file === 'server.json',
+  },
   // image-size ships no fixed version for its parser DoS advisories; the in-tree
   // pnpm patch is the mitigation, and only its defining files own the proof.
   {
@@ -566,9 +572,11 @@ function isAgentGuidance(file: string): boolean {
 }
 
 // The user docs: README and the docs site pages. `check:doc-prose` reads them; `check:doc-links`
-// resolves their links and also reruns when the website manifest or config that decide what the
-// built site renders change.
-const SITE_BUILD_INPUTS = new Set(['website/package.json', 'website/rspress.config.ts']);
+// resolves their links and also reruns when the site's own code changes: its manifest, config,
+// pages and components (everything in website/ outside the docs tree and loose Markdown).
+function isSiteBuildInput(file: string): boolean {
+  return file.startsWith('website/') && !file.startsWith('website/docs/') && !/\.mdx?$/.test(file);
+}
 
 // The generated capabilities page. Its cells are a read of the runtime facts, so the
 // page and the generator that renders it share one drift gate.
@@ -610,7 +618,7 @@ const docsOwnership: OwnershipRule = ({ file }) => {
       ),
     );
   }
-  if (isUserDocPage(file) || SITE_BUILD_INPUTS.has(file)) {
+  if (isUserDocPage(file) || isSiteBuildInput(file)) {
     selections.push(
       reason(
         'docs-links',

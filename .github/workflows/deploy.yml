@@ -1,12 +1,30 @@
-name: Deploy Docs
+name: Deploy docs redirects
 
+# The docs moved from oss.callstack.com/agent-device (GitHub Pages) to agent-device.dev (Vercel).
+# This publishes stubs that send every old page to its new URL (website/scripts/oss-redirects.mjs).
+# The script copies the Markdown and llms files from agent-device.dev and fails until that site
+# serves them, so the old docs stay published until the domain points at the new site.
+
+# Only changes to what it publishes run it, so an outage at agent-device.dev cannot fail unrelated
+# commits on main. A push run first waits until agent-device.dev serves that commit or a later one
+# (/version.txt), so it never copies docs from before the merge. Every path below is under website/,
+# which Vercel rebuilds; after a change to this workflow, or right after the cutover, run it by hand
+# on main to republish.
 on:
   push:
     branches:
       - main
+    paths:
+      - 'website/docs/**'
+      - 'website/scripts/oss-redirects.mjs'
+      - 'website/src/site/content.ts'
+      - 'website/src/site/llms.ts'
+  workflow_dispatch:
 
 jobs:
   deploy:
+    # Only main publishes to gh-pages, whichever way the run starts.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,15 +35,39 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Build docs
-        uses: ./.github/actions/build-docs
+      - name: Setup Node
+        uses: ./.github/actions/setup-node-pnpm
         with:
-          rspress-base: /${{ github.event.repository.name }}/
+          install-deps: 'false'
 
+      - name: Wait for agent-device.dev to serve this commit
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for attempt in $(seq 1 40); do
+            live=$(curl -fsS https://agent-device.dev/version.txt | tr -d '[:space:]' || true)
+            if [ -n "$live" ] && [ "$live" != local ]; then
+              status=$(gh api "repos/$REPO/compare/$SHA...$live" --jq .status 2>/dev/null || true)
+              if [ "$status" = identical ] || [ "$status" = ahead ]; then
+                echo "agent-device.dev serves $live, which includes $SHA."
+                exit 0
+              fi
+            fi
+            sleep 30
+          done
+          echo "agent-device.dev does not serve $SHA after 20 minutes; run this workflow by hand once it does."
+          exit 1
+
+      - name: Write the redirect pages
+        run: node website/scripts/oss-redirects.mjs website/oss-redirects
+
+      # Replaces the whole branch, including the old pr-preview/ deploys.
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@d92aa235d04922e8f08b40ce78cc5442fcfbfa2f # v4.8.0
         with:
-          folder: website/doc_build
+          folder: website/oss-redirects
           branch: gh-pages
-          clean-exclude: pr-preview
           force: false

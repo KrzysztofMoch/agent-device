@@ -3,8 +3,6 @@ title: Device Clouds
 description: Choose a hosted device provider for agent and CI workflows.
 ---
 
-# Device Clouds
-
 Use a device cloud or farm when an agent needs to drive a hosted mobile device without an interactive login. Pick the provider whose account and devices you use:
 
 - [BrowserStack](/docs/browserstack): Android and iOS App Automate sessions over WebDriver.
@@ -63,3 +61,14 @@ agent-device artifacts <provider-session-id> --provider <provider> --json
 ```
 
 Providers finalize video and log URLs after the session ends. If the lookup reports artifacts as pending right after `close`, retry it a little later.
+
+## Expo Simulators
+
+[Expo Simulators](https://docs.expo.dev/preview/simulators/introduction/) runs Android Emulators and iOS Simulators on EAS. It is not an `agent-device` provider: an Expo Simulators session provisions its own `agent-device` daemon, and you run the same commands inside the session through `eas simulator:exec`:
+
+```bash
+eas simulator:exec npx agent-device@latest open com.example.app --platform ios
+eas simulator:exec npx agent-device@latest snapshot -i
+```
+
+Expo Simulators is a limited-access preview. For session setup, see Expo's [agent-device guide](https://docs.expo.dev/agents/agent-device/) and [Drive the device](https://docs.expo.dev/preview/simulators/how-to/drive-the-device/).

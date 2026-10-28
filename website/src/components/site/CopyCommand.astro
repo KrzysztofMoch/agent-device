@@ -1,0 +1,111 @@
+---
+// A one-line shell command with a copy button, and an optional label before it (INSTALL).
+interface Props {
+  class?: string;
+  command: string;
+  label?: string;
+}
+const { command, class: className, label } = Astro.props;
+---
+
+<div class:list={['cmd', className]}>
+  {label && <span class="cmd-label label">{label}</span>}
+  <code class="cmd-text"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-value">{command}</span></code>
+  <button class="cmd-copy label" type="button" data-copy={command} aria-label={`Copy ${command}`}>Copy</button>
+  <span class="sr-only" role="status"></span>
+</div>
+
+<script>
+  // The button's aria-label names the command, so a status region announces the result.
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘C' : 'Ctrl+C';
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    const status = button.nextElementSibling;
+    button.addEventListener('click', async () => {
+      let message: string;
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy ?? '');
+        button.textContent = 'Copied';
+        message = 'Copied to the clipboard';
+      } catch {
+        // Without clipboard access, select the command so the shortcut copies it.
+        const value = button.parentElement?.querySelector('.cmd-value');
+        if (value) getSelection()?.selectAllChildren(value);
+        button.textContent = `Press ${shortcut}`;
+        message = `Command selected. Press ${shortcut} to copy it.`;
+      }
+      if (status) status.textContent = message;
+      setTimeout(() => {
+        button.textContent = 'Copy';
+        if (status) status.textContent = '';
+      }, 1600);
+    });
+  }
+</script>
+
+<style>
+  .cmd {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    width: min(100%, 36rem);
+    padding: 0.625rem 0.625rem 0.625rem 1rem;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+  }
+  .cmd-label {
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    padding-inline-end: 1rem;
+    margin-inline-end: -0.5rem;
+    border-right: 1px solid var(--line-strong);
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .cmd-text {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--text);
+    scrollbar-width: none;
+  }
+  .cmd-prompt {
+    margin-inline-end: 0.75rem;
+    color: var(--accent);
+  }
+  .cmd-copy {
+    padding: 0.375rem 0.625rem;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .cmd-copy:hover {
+    color: var(--accent);
+  }
+  @media (max-width: 30rem) {
+    .cmd {
+      gap: 0.5rem;
+      padding-left: 0.75rem;
+    }
+    .cmd-prompt {
+      margin-inline-end: 0.5rem;
+    }
+    /* The label takes its own line above the command, so the command keeps the full width. */
+    .cmd:has(.cmd-label) {
+      flex-wrap: wrap;
+      row-gap: 0.375rem;
+    }
+    .cmd-label {
+      flex-basis: 100%;
+      padding: 0 0 0.375rem;
+      margin: 0;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+  }
+</style>
