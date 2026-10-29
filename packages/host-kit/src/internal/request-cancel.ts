@@ -12,7 +12,15 @@ type RequestCancelState = {
   requestAbortControllers: Map<string, RequestAbortController>;
 };
 
-type RequestAbortController = AbortController & { executionDeadlineMs?: number };
+type RequestAbortController = AbortController & {
+  executionDeadlineMs?: number;
+  /**
+   * The daemon's own result deadline, which the transport that admitted the request set ahead of
+   * the client's: the end of the client envelope less the daemon's result margin. An attempt
+   * registered under a parent inherits the parent's, because it runs inside the parent's envelope.
+   */
+  resultDeadlineMs?: number;
+};
 
 const REQUEST_CANCEL_SLOT = Symbol('requestCancel');
 const requestCancelState = (): RequestCancelState =>
@@ -80,6 +88,7 @@ function evictOldestSetEntries<V>(set: Set<V>): void {
 export function registerRequestAbort(
   requestId: string | undefined,
   parentRequestId?: string,
+  admission?: Readonly<{ resultDeadlineMs?: number }>,
 ): RequestAbortRegistration | undefined {
   if (!requestId) return undefined;
   if (requestAbortControllers().has(requestId)) {
@@ -90,9 +99,11 @@ export function registerRequestAbort(
   }
   evictOldestEntries(requestAbortControllers());
   const controller: RequestAbortController = new AbortController();
-  controller.executionDeadlineMs = parentRequestId
-    ? requestAbortControllers().get(parentRequestId)?.executionDeadlineMs
-    : undefined;
+  const parent = parentRequestId ? requestAbortControllers().get(parentRequestId) : undefined;
+  controller.executionDeadlineMs = parent?.executionDeadlineMs;
+  controller.resultDeadlineMs = parentRequestId
+    ? parent?.resultDeadlineMs
+    : admission?.resultDeadlineMs;
   requestAbortControllers().set(requestId, controller);
   if (canceledRequestIds().has(requestId)) {
     controller.abort(createRequestCanceledError());
@@ -152,6 +163,11 @@ export function getRequestSignal(requestId: string | undefined): AbortSignal | u
 /** The original bounded composite cutoff, inherited by nested test attempts. */
 export function getRequestExecutionDeadlineMs(requestId: string | undefined): number | undefined {
   return requestId ? requestAbortControllers().get(requestId)?.executionDeadlineMs : undefined;
+}
+
+/** The daemon's result deadline the admitting transport set for the request, if it set one. */
+export function getRequestResultDeadlineMs(requestId: string | undefined): number | undefined {
+  return requestId ? requestAbortControllers().get(requestId)?.resultDeadlineMs : undefined;
 }
 
 export function throwIfRequestCanceled(requestId: string | undefined): void {

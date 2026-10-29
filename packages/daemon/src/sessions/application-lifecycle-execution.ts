@@ -1,3 +1,7 @@
+import {
+  getRequestExecutionDeadlineMs,
+  getRequestResultDeadlineMs,
+} from '@agent-device/host-kit/request';
 import { resolvePlannedOperations } from '../core/execution-plan.ts';
 import type { ApplicationLifecycleExecution } from '@agent-device/contracts/application-lifecycle-runtime';
 import { resolveRunnerLogicalLeaseContext } from '../core/lease-context.ts';
@@ -10,6 +14,7 @@ export function applicationLifecycleExecutionFromRequest(
   traceLogPath?: string,
 ): ApplicationLifecycleExecution {
   return {
+    requestDeadlineAtMs: requestDeadlineAtMs(req),
     requestId: req.meta?.requestId,
     logPath,
     traceLogPath,
@@ -24,4 +29,13 @@ export function applicationLifecycleExecutionFromRequest(
     runnerLeaseContext: resolveRunnerLogicalLeaseContext(req),
     plannedOperations: resolvePlannedOperations(req.internal?.executionPlan),
   };
+}
+
+/**
+ * An enforced daemon deadline is the request's deadline. Otherwise it is the result deadline the
+ * transport that admitted the request (or its parent) set, ahead of the client's envelope.
+ */
+function requestDeadlineAtMs(req: DaemonRequest): number | undefined {
+  const requestId = req.meta?.requestId;
+  return getRequestExecutionDeadlineMs(requestId) ?? getRequestResultDeadlineMs(requestId);
 }

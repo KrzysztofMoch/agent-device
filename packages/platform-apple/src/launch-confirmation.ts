@@ -1,3 +1,4 @@
+import { DEFAULT_ALERT_TIMEOUT_MS } from '@agent-device/contracts/alert-contract';
 import type { Interactor } from '@agent-device/contracts/interactor-types';
 import { invalidRuntimeContract } from '@agent-device/contracts/runtime-contract-error';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
@@ -5,6 +6,8 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { alertIfPresent } from './alert.ts';
 import { resolveIosSimulatorDeepLinkBundleId } from './core/app-resolution.ts';
+import { RUNNER_READY_PREFLIGHT_TIMEOUT_MS } from './runner/runner-contract.ts';
+import { isRunnerMainThreadTimeoutError } from './runner/runner-error-classification.ts';
 
 export const LAUNCH_CONFIRMATION_FOREIGN_APP_REASON = 'launch_confirmation_foreign_app';
 
@@ -46,12 +49,23 @@ const LAUNCH_CONFIRMATION_TITLE = /^Open in [“"].+[”"]\?$/u;
  */
 export const URL_OWNER_LOOKUP_TIMEOUT_MS = 10_000;
 
+/**
+ * What one more press of `Open` can cost (#3861): the press and the read that verifies it, each a
+ * runner alert command that pays a readiness preflight and then runs up to its alert watchdog.
+ */
+const NEXT_PRESS_COST_MS = 2 * (RUNNER_READY_PREFLIGHT_TIMEOUT_MS + DEFAULT_ALERT_TIMEOUT_MS);
+
 /** A custom-scheme launch URL SpringBoard may hold for the session app it was checked for. */
 export type LaunchConfirmationTarget = Readonly<{ url: string; appBundleId: string }>;
 
 /** The device reads and the answer one launch confirmation needs, bound to the session app. */
 export type LaunchConfirmationPort = Readonly<{
   appBundleId: string;
+  /**
+   * When the enclosing request must have its result. It decides only whether `Open` is pressed
+   * again; the first press and every read keep their own runner bounds.
+   */
+  deadlineAtMs: number | undefined;
   /** Initial presentation wait, or `undefined` when no alert appears within its window. */
   awaitAlert(): Promise<Record<string, unknown> | undefined>;
   /** One presence read after an attempted accept. */
@@ -101,9 +115,44 @@ export async function answerLaunchConfirmation(
       hint: `iOS is asking whether to open ${owner.owner}. Answer it with alert accept or alert dismiss, and pass a launch URL whose scheme belongs to the session app.`,
     });
   }
-  return await port
-    .acceptAlert()
-    .then(accepted, async (error: unknown) => await verifyFailedAcceptance(port, alert, error));
+  return await acceptConfirmation(port, alert);
+}
+
+/**
+ * Presses `Open` and verifies a failed press. Only a press the runner's watchdog abandoned, with the
+ * same confirmation still up, is pressed again, and only while the request's deadline leaves time
+ * for another whole press and its verification read. Any other failure, and a confirmation that is
+ * gone, ends the answer at once. The runner refuses new work as `RUNNER_BUSY` until abandoned work
+ * drains, so a read that sees the confirmation proves the abandoned press finished without
+ * answering it, and the next press cannot answer a later alert.
+ */
+async function acceptConfirmation(
+  port: LaunchConfirmationPort,
+  original: Record<string, unknown>,
+): Promise<LaunchConfirmationAttempt> {
+  for (;;) {
+    const failure = await port.acceptAlert().then(
+      () => undefined,
+      (error: unknown) => ({ error }),
+    );
+    if (!failure) return accepted();
+    const attempt = await verifyFailedAcceptance(port, original, failure.error);
+    if (attempt.outcome !== 'unanswered') return attempt;
+    const remainingMs = timeLeft(port.deadlineAtMs);
+    if (!isRunnerMainThreadTimeoutError(failure.error) || remainingMs < NEXT_PRESS_COST_MS) {
+      reportUnanswered('alert-still-present', {});
+      return attempt;
+    }
+    emitDiagnostic({
+      level: 'debug',
+      phase: 'ios_launch_confirmation_reaccept',
+      data: { reason: 'runner-main-thread-timeout', remainingMs },
+    });
+  }
+}
+
+function timeLeft(deadlineAtMs: number | undefined): number {
+  return deadlineAtMs === undefined ? 0 : Math.max(0, deadlineAtMs - Date.now());
 }
 
 async function verifyFailedAcceptance(
@@ -118,7 +167,6 @@ async function verifyFailedAcceptance(
     isLaunchConfirmation(read.alert) &&
     read.alert['message'] === original['message']
   ) {
-    reportUnanswered('alert-still-present', {});
     return { outcome: 'unanswered', reason: 'alert-still-present' };
   }
   return unreadable('alert-accept')(error);
@@ -181,12 +229,13 @@ export async function answerSimulatorLaunchConfirmation(
   confirmation: LaunchConfirmationTarget,
   interactor: Promise<Interactor>,
   signal: AbortSignal,
+  deadlineAtMs: number | undefined,
 ): Promise<LaunchConfirmationAttempt> {
   const settled: Readonly<{ interactor: Interactor }> | LaunchConfirmationAttempt =
     await interactor.then((resolved) => ({ interactor: resolved }), unreadable('runner'));
   if ('outcome' in settled) return settled;
   return await answerLaunchConfirmation(
-    createLaunchConfirmationPort(device, confirmation, settled.interactor, signal),
+    createLaunchConfirmationPort(device, confirmation, settled.interactor, signal, deadlineAtMs),
   );
 }
 
@@ -195,6 +244,7 @@ export function createLaunchConfirmationPort(
   { url, appBundleId }: LaunchConfirmationTarget,
   interactor: Pick<Interactor, 'awaitAlert' | 'readAlert' | 'acceptAlert'>,
   signal: AbortSignal,
+  deadlineAtMs: number | undefined,
 ): LaunchConfirmationPort {
   const awaitAlert = interactor.awaitAlert?.bind(interactor);
   const readAlert = interactor.readAlert?.bind(interactor);
@@ -205,6 +255,7 @@ export function createLaunchConfirmationPort(
   const target = { appBundleId, surface: 'app' } as const;
   return Object.freeze({
     appBundleId,
+    deadlineAtMs,
     awaitAlert: async () =>
       await alertIfPresent(
         awaitAlert({ ...target, timeoutMs: LAUNCH_CONFIRMATION_PRESENTATION_TIMEOUT_MS }),

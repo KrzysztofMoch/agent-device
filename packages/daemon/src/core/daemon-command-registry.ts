@@ -11,8 +11,12 @@ import {
   resolveCommandDeviceClaimPolicy,
   resolveCommandTimeoutPolicy,
 } from '@agent-device/command-registry/registry';
-import { resolveCommandDaemonTimeoutMs } from '@agent-device/command-registry/timeout-policy';
+import {
+  resolveCommandDaemonBudgetMs,
+  resolveCommandDaemonTimeoutMs,
+} from '@agent-device/command-registry/timeout-policy';
 import type { RefFrameEffect } from '@agent-device/contracts/replay';
+import type { DaemonWireRequest } from '@agent-device/contracts/command';
 import type { DaemonRequest } from './daemon-request.ts';
 
 export type { DaemonCommandDescriptor, DaemonCommandRoute, SessionCommandKind };
@@ -35,6 +39,19 @@ const DAEMON_COMMAND_REGISTRY = buildDaemonCommandRegistry(DAEMON_COMMAND_DESCRI
 
 export function resolveDaemonRequestTimeoutMs(req: DaemonRequest): number | undefined {
   return resolveCommandDaemonTimeoutMs(resolveCommandTimeoutPolicy(req.command), req);
+}
+
+/**
+ * When a request admitted now must have its result: the client envelope starts as the transport
+ * admits the request, and the daemon keeps the envelope's result margin. `undefined` for a command
+ * whose client waits without an envelope.
+ */
+export function resolveDaemonRequestResultDeadlineMs(
+  req: DaemonWireRequest,
+  admittedAtMs = Date.now(),
+): number | undefined {
+  const budgetMs = resolveCommandDaemonBudgetMs(resolveCommandTimeoutPolicy(req.command), req);
+  return budgetMs === undefined ? undefined : admittedAtMs + budgetMs;
 }
 
 export function getDaemonCommandRoute(command: string): DaemonCommandRoute {

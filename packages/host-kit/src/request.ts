@@ -4,6 +4,7 @@ export {
   clearRequestCanceled,
   getRequestSignal,
   getRequestExecutionDeadlineMs,
+  getRequestResultDeadlineMs,
   isRequestCanceled,
   markRequestCanceled,
   registerRequestAbort,
