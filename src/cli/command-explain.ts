@@ -121,7 +121,6 @@ function buildCommandExplanation(
     ...(cliSchema ? { cli: describeCliSurface(descriptor.name, cliSchema) } : {}),
     files: commandFiles(
       descriptor.name,
-      descriptor.catalog.group,
       ownerFilesForCommand(descriptor.name),
       family?.name,
       'daemon' in descriptor ? descriptor.daemon?.route : undefined,
@@ -303,7 +302,6 @@ function groupFlagDefinitions(): Map<FlagKey, FlagDefinition[]> {
 
 function commandFiles(
   command: string,
-  catalogGroup: CommandDescriptor['catalog']['group'],
   ownerFiles: readonly string[],
   family: string | undefined,
   daemonRoute: DaemonCommandRoute | undefined,
@@ -311,9 +309,6 @@ function commandFiles(
   daemonRouteOwnerFiles: Readonly<Record<DaemonCommandRoute, string>>,
 ): string[] {
   const derived = ['packages/command-registry/src/registry.ts'];
-  if (catalogGroup === 'local-cli') {
-    derived.push('packages/command-registry/src/descriptors/local-cli.ts');
-  }
   const opportunistic: string[] = [];
   if (family) {
     derived.push(`src/commands/${family}/index.ts`);
