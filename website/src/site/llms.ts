@@ -1,6 +1,27 @@
 // The agent-facing part of /llms.txt: when to use agent-device and how an agent should approach
 // it. starlight-llms-txt (astro.config.mjs) writes the title, this description as the summary,
-// these details, the generated documentation sets and the optional links.
+// these details, the generated documentation sets and the optional links. Only astro.config.mjs
+// imports it, at build time, so docs links can take each page's own title.
+import { readFileSync } from 'node:fs';
+
+/** A docs page's frontmatter title, so a title edit cannot leave a label here stale. */
+function docTitle(slug: string): string {
+  const page = readFileSync(new URL(`../../docs/docs/${slug}.md`, import.meta.url), 'utf8');
+  const title = /^title: (.+)$/m.exec(page)?.[1];
+  if (!title) throw new Error(`llms.ts: docs/docs/${slug}.md has no title.`);
+  return title;
+}
+
+const docLink = (slug: string, about: string) =>
+  `- [${docTitle(slug)}](https://agent-device.dev/docs/${slug}): ${about}`;
+
+/**
+ * The pages llms-small.txt leaves out (astro.config.mjs passes them to starlight-llms-txt): the
+ * reference pages an agent reads from the installed CLI (`agent-device help`,
+ * `agent-device capabilities`) or only when it needs them. llms.txt names them from this list.
+ */
+export const llmsSmallExclude = ['commands', 'capabilities', 'client-api', 'migrating-gestures'];
+const excludedTitles = llmsSmallExclude.map(docTitle);
 
 export const llmsDescription =
   'Open source device layer for AI agents: it lets coding agents control mobile, web, TV, and desktop apps on devices and simulators, locally or in the cloud. It gives agents structured UI state, semantic interaction, and runtime evidence through a CLI, MCP server, and typed Node.js API.';
@@ -32,20 +53,22 @@ For stable, repeatable test suites, use [e2e](https://e2e.tester.army/), a TypeS
 
 The capabilities page is generated from the runtime's own capability facts, so it is the one source for what each target supports.
 
-- [Capabilities](https://agent-device.dev/docs/capabilities): every target, framework, and command family, with their limits.
+${docLink('capabilities', 'every target, framework, and command family, with their limits.')}
 - \`agent-device capabilities --platform <platform>\` lists the commands the installed version supports on one target.
-- [Device clouds](https://agent-device.dev/docs/device-clouds): hosted devices and the self-hosted remote daemon.
+${docLink('device-clouds', 'hosted devices and the self-hosted remote daemon.')}
 
 ## Start here
 
-- [Installation](https://agent-device.dev/docs/installation): \`npm install -g agent-device\` (Node.js 22.12 or newer), then \`agent-device doctor\` to check the setup.
-- [Introduction](https://agent-device.dev/docs/introduction): Scope, supported workflows, and responsibility boundaries.
-- [AI Agent Setup](https://agent-device.dev/docs/agent-setup): CLI, skills, MCP, and coding-agent setup.
-- [Quick Start](https://agent-device.dev/docs/quick-start): First app-verification workflow.
-- [Commands](https://agent-device.dev/docs/commands): Command groups and platform behavior.
-- [Security and Trust](https://agent-device.dev/docs/security-trust): Local execution, permissions, credentials, and artifacts.
-- [Known Limitations](https://agent-device.dev/docs/known-limitations): Current platform and capability constraints.
-- [Node.js API](https://agent-device.dev/docs/client-api): Typed deterministic integration.`;
+llms-small.txt leaves out these pages: ${excludedTitles.join(', ')}. Read them in llms-full.txt or on the site.
+
+${docLink('installation', '`npm install -g agent-device` (Node.js 22.12 or newer), then `agent-device doctor` to check the setup.')}
+${docLink('introduction', 'Scope, supported workflows, and responsibility boundaries.')}
+${docLink('agent-setup', 'CLI, skills, MCP, and coding-agent setup.')}
+${docLink('quick-start', 'First app-verification workflow.')}
+${docLink('commands', 'Command groups and platform behavior.')}
+${docLink('security-trust', 'Local execution, permissions, credentials, and artifacts.')}
+${docLink('known-limitations', 'Current platform and capability constraints.')}
+${docLink('client-api', 'Typed deterministic integration.')}`;
 
 export const llmsOptionalLinks = [
   {
