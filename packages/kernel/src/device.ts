@@ -827,7 +827,7 @@ function appleTargetSelectionRank(
   fallbackRank: number,
 ): number {
   const targetRanks: Record<DeviceTarget, number> = {
-    mobile: isIpadDeviceName(device.name) ? ipadRank : phoneRank,
+    mobile: isIpadDevice(device) ? ipadRank : phoneRank,
     tv: tvRank,
     desktop: fallbackRank,
   };
@@ -838,6 +838,11 @@ function isAppleDeviceCandidateSet(devices: DeviceInfo[]): boolean {
   return devices.length > 0 && devices.every((device) => isApplePlatform(device.platform));
 }
 
-function isIpadDeviceName(name: string): boolean {
-  return /\bipad\b/i.test(name);
+/**
+ * Discovery stamps `appleOs` from the device type, which survives a renamed simulator; the name
+ * is only a fallback for records that predate the discriminant.
+ */
+function isIpadDevice(device: Pick<DeviceInfo, 'name' | 'appleOs'>): boolean {
+  if (device.appleOs) return device.appleOs === 'ipados';
+  return /\bipad\b/i.test(device.name);
 }
