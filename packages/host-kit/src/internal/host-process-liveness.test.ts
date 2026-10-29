@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { beforeEach, test, vi } from 'vitest';
+import fs from 'node:fs';
+import { afterEach, beforeEach, test, vi } from 'vitest';
 
 const { mockRunCmdSync, mockRunCmd } = vi.hoisted(() => ({
   mockRunCmdSync: vi.fn(),
@@ -29,9 +30,21 @@ function psAnswersEachField(fields: Record<string, string>): void {
   });
 }
 
+const PINNED_PS_COMMANDS: readonly string[] = ['/bin/ps', '/run/current-system/sw/bin/ps'];
+
+function psInstalledAt(installed: readonly string[]): void {
+  vi.spyOn(fs, 'accessSync').mockImplementation((candidate) => {
+    if (!installed.includes(String(candidate))) throw new Error(`ENOENT: ${String(candidate)}`);
+  });
+}
+
 beforeEach(() => {
   mockRunCmdSync.mockReset();
   mockRunCmd.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 test('isProcessZombie detects the Z state code with trailing flags', () => {
@@ -71,7 +84,7 @@ test('reads many process identities from one ps snapshot', () => {
     startTime: 'Mon Aug 10 20:01:00 2026',
   });
   assert.equal(mockRunCmdSync.mock.calls.length, 1);
-  assert.equal(mockRunCmdSync.mock.calls[0]?.[0], '/bin/ps');
+  assert.ok(PINNED_PS_COMMANDS.includes(mockRunCmdSync.mock.calls[0]?.[0]));
   assert.deepEqual(mockRunCmdSync.mock.calls[0]?.[1], [
     '-p',
     '4242,4343',
@@ -171,6 +184,38 @@ test('the ownership read answers the zombie question from the state field', asyn
     command: 'y',
     zombie: true,
   });
-  assert.equal(mockRunCmd.mock.calls[0]?.[0], '/bin/ps');
+  assert.ok(PINNED_PS_COMMANDS.includes(mockRunCmd.mock.calls[0]?.[0]));
   assert.equal(mockRunCmd.mock.calls[0]?.[2]?.timeoutMs, 1_000);
+});
+
+test('a host without /bin/ps reads identity through the NixOS system profile procps', async () => {
+  psInstalledAt(['/run/current-system/sw/bin/ps']);
+  psReturns('4242 Ss   Mon Aug 10 20:00:00 2026\n');
+  psAnswersEachField({ 'lstart=': 'x', 'command=': 'y', 'state=': 'Ss' });
+
+  assert.equal(
+    readHostProcessIdentityObservations([4242]).get(4242)?.startTime,
+    'Mon Aug 10 20:00:00 2026',
+  );
+  assert.equal((await readProcessIdentityFacts(4242)).startTime, 'x');
+  assert.equal(mockRunCmdSync.mock.calls[0]?.[0], '/run/current-system/sw/bin/ps');
+  for (const call of mockRunCmd.mock.calls) {
+    assert.equal(call[0], '/run/current-system/sw/bin/ps');
+  }
+});
+
+test('a host with no pinned ps still runs /bin/ps and never resolves ps from PATH', () => {
+  psInstalledAt([]);
+  psReturns('', 1);
+
+  assert.equal(isProcessZombie(4242), false);
+  assert.equal(mockRunCmdSync.mock.calls[0]?.[0], '/bin/ps');
+});
+
+test('a host with both pinned ps binaries keeps running /bin/ps', () => {
+  psInstalledAt(['/bin/ps', '/run/current-system/sw/bin/ps']);
+  psReturns('Ss  \n');
+
+  assert.equal(isProcessZombie(4242), false);
+  assert.equal(mockRunCmdSync.mock.calls[0]?.[0], '/bin/ps');
 });

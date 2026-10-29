@@ -1,13 +1,14 @@
+import fs from 'node:fs';
 import type { ExecOptions, ExecResult } from './exec.ts';
 import { runCmd, runCmdSync, withoutCommandExecutorOverride } from './exec.ts';
 import { sleep } from './retry.ts';
 import type { EnvMap, HostEnvironment } from '@agent-device/kernel/source-value';
 
 const PS_TIMEOUT_MS = 1_000;
-// The one binary behind every POSIX probe: pinning it keeps a hostile PATH from
-// substituting another `ps`. Windows hosts branch to the CIM query at every call
-// site before this constant is consulted, so it names no Windows tool.
-const HOST_PS_COMMAND = '/bin/ps';
+// Every POSIX probe runs the first of these that exists, never a PATH lookup, so a hostile PATH
+// cannot substitute another `ps`. NixOS keeps procps only in its root-owned system profile. With
+// neither present, `/bin/ps` runs and fails closed. Windows hosts take the CIM query instead.
+const HOST_PS_COMMANDS = ['/bin/ps', '/run/current-system/sw/bin/ps'] as const;
 // PowerShell pays a fixed startup cost before the CIM query even runs, so every
 // Windows process-table read gets at least this budget instead of the `ps` one.
 const WINDOWS_PS_TIMEOUT_MS = 2_000;
@@ -75,6 +76,16 @@ export function hostPlatform(): NodeJS.Platform {
 
 export function hostProcessId(): number {
   return process.pid;
+}
+
+function hostPsCommand(): string {
+  for (const candidate of HOST_PS_COMMANDS) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return HOST_PS_COMMANDS[0];
 }
 
 export type ListHostProcessesOptions = {
@@ -212,7 +223,7 @@ function readHostProcessIdentityRowsSync(
     return windowsProcessIdentityRows(readWindowsProcessRows(pids, WINDOWS_PS_TIMEOUT_MS));
   }
   try {
-    const result = runCmdSync(HOST_PS_COMMAND, HOST_PROCESS_IDENTITY_PS_ARGS(pids), {
+    const result = runCmdSync(hostPsCommand(), HOST_PROCESS_IDENTITY_PS_ARGS(pids), {
       allowFailure: true,
       timeoutMs: PS_TIMEOUT_MS,
     });
@@ -234,7 +245,7 @@ async function readHostProcessIdentityRowsAsync(
     );
   }
   try {
-    const result = await runCmd(HOST_PS_COMMAND, HOST_PROCESS_IDENTITY_PS_ARGS(selected), {
+    const result = await runCmd(hostPsCommand(), HOST_PROCESS_IDENTITY_PS_ARGS(selected), {
       allowFailure: true,
       timeoutMs: PS_TIMEOUT_MS,
     });
@@ -272,7 +283,7 @@ function readProcessField(pid: number, field: HostProcessField): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (isWindowsHostPlatform()) return readWindowsProcessField(pid, field);
   try {
-    const result = runCmdSync(HOST_PS_COMMAND, ['-p', String(pid), '-o', field], {
+    const result = runCmdSync(hostPsCommand(), ['-p', String(pid), '-o', field], {
       allowFailure: true,
       timeoutMs: PS_TIMEOUT_MS,
     });
@@ -289,7 +300,7 @@ async function readProcessFieldAsync(
 ): Promise<string | null> {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
-    const result = await runCmd(HOST_PS_COMMAND, ['-p', String(pid), '-o', field], {
+    const result = await runCmd(hostPsCommand(), ['-p', String(pid), '-o', field], {
       allowFailure: true,
       timeoutMs,
     });
@@ -492,7 +503,7 @@ export async function listHostProcesses(
 ): Promise<HostProcessInfo[]> {
   if (isWindowsHostPlatform()) return await listWindowsHostProcesses(options);
   const result = await (options.runCommand ?? runCmd)(
-    options.runCommand ? 'ps' : HOST_PS_COMMAND,
+    options.runCommand ? 'ps' : hostPsCommand(),
     ['-ax', '-o', 'pid=,ppid=,command='],
     {
       allowFailure: true,
