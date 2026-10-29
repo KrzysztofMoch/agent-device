@@ -651,7 +651,8 @@ export function deviceIdentityFlag(
  * this refuses with the candidates rather than picking one. A quietly chosen device produces a
  * successful response describing the WRONG device — indistinguishable from the right one — and
  * reads are no safer than writes: three successful snapshots of the wrong emulator are still three
- * wrong answers. Multi-device operations (`devices`) never enter this path.
+ * wrong answers. Multi-device operations (`devices`) never enter this path. The one opt-in
+ * exception is `boot --pick`, which never reaches here; see `pickNewestBootableDevice`.
  */
 function selectDefaultDevice(
   candidates: DeviceInfo[],
@@ -723,6 +724,54 @@ function preferVirtualCandidates(candidates: DeviceInfo[]): DeviceInfo[] {
 function candidatesWithBestAppleRank(candidates: DeviceInfo[]): DeviceInfo[] {
   const bestRank = Math.min(...candidates.map((device) => appleDeviceSelectionRank(device)));
   return candidates.filter((device) => appleDeviceSelectionRank(device) === bestRank);
+}
+
+/** Tie-break policies `boot --pick` accepts. */
+export const BOOT_PICK_POLICIES = ['newest'] as const;
+export type BootPickPolicy = (typeof BOOT_PICK_POLICIES)[number];
+
+/**
+ * COLD PICK, the one opt-in exception to SINGULAR RESOLUTION, for `boot --pick newest` only. It
+ * decides only when several candidates survive the preference tiers and NONE of them is booted:
+ * the opt-in says any of them is acceptable, nothing runs on them yet to be misread, and once the
+ * pick boots, booted-over-offline resolves every later unscoped request to it. A booted tie stays
+ * ambiguous, because the next command would still have to choose. Order: mobile target, newest
+ * OS version, name, id.
+ */
+export function pickNewestBootableDevice(candidates: DeviceInfo[]): DeviceInfo | undefined {
+  const preferred = preferredDeviceCandidates(candidates);
+  if (preferred.length < 2 || preferred.some((device) => device.booted)) return undefined;
+  // Built per pick, not at module load: the first collator costs every CLI start its ICU setup.
+  const collator = new Intl.Collator('en', { numeric: true });
+  return [...preferred].sort((left, right) => compareNewestBootable(collator, left, right))[0];
+}
+
+function compareNewestBootable(
+  collator: Intl.Collator,
+  left: DeviceInfo,
+  right: DeviceInfo,
+): number {
+  return (
+    Number(isMobileTarget(right)) - Number(isMobileTarget(left)) ||
+    compareOsVersionsNewestFirst(collator, left.osVersion, right.osVersion) ||
+    collator.compare(left.name, right.name) ||
+    collator.compare(left.id, right.id)
+  );
+}
+
+function isMobileTarget(device: DeviceInfo): boolean {
+  return (device.target ?? 'mobile') === 'mobile';
+}
+
+function compareOsVersionsNewestFirst(
+  collator: Intl.Collator,
+  left: string | undefined,
+  right: string | undefined,
+): number {
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return collator.compare(right, left);
 }
 
 export function matchesDeviceSelector(

@@ -8,6 +8,7 @@ import type {
   AppInstallFromSourceResult,
   AppOpenResult,
   CommandRequestResult,
+  DeviceSelectionMetadata,
   SessionCloseResult,
   SessionSaveScriptResult,
 } from '@agent-device/contracts/client';
@@ -167,7 +168,16 @@ function bootCliOutput(result: CommandRequestResult): CliOutput {
   const data = result as Record<string, unknown>;
   const platform = data.platform ?? 'unknown';
   const device = data.device ?? data.id ?? 'unknown';
-  return { data, text: `Boot ready: ${device} (${platform})` };
+  return { data, text: `Boot ready: ${device} (${platform})${bootPickNote(data.selection)}` };
+}
+
+/** Names a `--pick` choice, so a picked device never reads as the only match. */
+function bootPickNote(selection: unknown): string {
+  if (typeof selection !== 'object' || selection === null) return '';
+  const { reason, candidateCount } = selection as Partial<DeviceSelectionMetadata>;
+  return reason === 'newest-bootable-local'
+    ? `, picked by --pick newest from ${candidateCount} matching devices`
+    : '';
 }
 
 function shutdownCliOutput(result: CommandRequestResult): CliOutput {

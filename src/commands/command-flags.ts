@@ -102,6 +102,7 @@ function buildFlags(options: InternalRequestOptions): CommandFlags {
     pauseMs: options.pauseMs,
     pattern: options.pattern,
     headless: options.headless,
+    pick: options.pick,
     restart: options.restart,
     replayUpdate: options.replayUpdate,
     replayBackend: options.replayBackend,

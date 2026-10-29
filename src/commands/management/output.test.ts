@@ -416,3 +416,34 @@ describe('devices output', () => {
     );
   });
 });
+
+describe('boot CLI output', () => {
+  const boot = (selection: Record<string, unknown>) =>
+    managementCliOutputFormatters.boot({
+      env: process.env,
+      input: {},
+      result: { platform: 'ios', device: 'iPhone 17', id: 'sim-17', booted: true, selection },
+    });
+
+  test('names a --pick choice so it never reads as the only match', async () => {
+    const output = await boot({
+      reason: 'newest-bootable-local',
+      source: 'local',
+      candidateCount: 3,
+      bootOccurred: true,
+    });
+    expect(output.text).toBe(
+      'Boot ready: iPhone 17 (ios), picked by --pick newest from 3 matching devices',
+    );
+  });
+
+  test('keeps the plain line for any other selection', async () => {
+    const output = await boot({
+      reason: 'single-bootable-local',
+      source: 'local',
+      candidateCount: 1,
+      bootOccurred: true,
+    });
+    expect(output.text).toBe('Boot ready: iPhone 17 (ios)');
+  });
+});

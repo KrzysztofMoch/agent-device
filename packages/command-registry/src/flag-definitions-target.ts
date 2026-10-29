@@ -1,5 +1,5 @@
 import { SESSION_SURFACES } from '@agent-device/contracts/session';
-import { PLATFORM_SELECTORS } from '@agent-device/kernel/device';
+import { BOOT_PICK_POLICIES, PLATFORM_SELECTORS } from '@agent-device/kernel/device';
 import { PERF_KIND_VALUES } from '@agent-device/contracts/observability';
 import type { FlagDefinition } from './flag-types.ts';
 
@@ -114,6 +114,17 @@ export const TARGET_FLAG_DEFINITIONS: readonly FlagDefinition[] = [
     usageLabel: '--headless',
     usageDescription: 'Boot: launch Android emulator without a GUI window',
     projectConfig: true,
+    recorded: false,
+  },
+  {
+    key: 'pick',
+    names: ['--pick'],
+    type: 'enum',
+    enumValues: BOOT_PICK_POLICIES,
+    usageLabel: `--pick ${BOOT_PICK_POLICIES.join('|')}`,
+    usageDescription:
+      'Boot: when several shut-down devices match equally, boot the one with the newest OS (else first by name) instead of failing',
+    projectConfig: false,
     recorded: false,
   },
   {

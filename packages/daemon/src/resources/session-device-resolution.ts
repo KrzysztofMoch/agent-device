@@ -4,7 +4,14 @@ import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import { AppError, sessionOrDeviceSelectorRequiredDetails } from '@agent-device/kernel/errors';
 import { isActiveProviderDevice } from '../core/provider-device-admission.ts';
 import type { DaemonPlatformServices } from '../core/platform-services.ts';
-import { resolveTargetDevice } from '@agent-device/device-selection/dispatch-resolve';
+import {
+  resolveTargetDevice,
+  resolveTargetDeviceSelection,
+} from '@agent-device/device-selection/dispatch-resolve';
+import {
+  resolveExistingSessionDeviceSelection,
+  type DeviceSelectionResult,
+} from '@agent-device/device-selection/device-selection-resolver';
 import type { DaemonRequest } from '../core/daemon-request.ts';
 import type { SessionState } from '../core/session-state.ts';
 import {
@@ -69,12 +76,45 @@ export async function resolveCommandDevice(params: {
   return hostApp && device.id === hostApp.hostDeviceId ? params.session!.device : device;
 }
 
+type PowerCommandDeviceParams = Omit<
+  Parameters<typeof resolveCommandDevice>[0],
+  'androidAvdSelection'
+>;
+
 /** Boot and shutdown both allow a stopped Android AVD to be selected by name. */
 export async function resolvePowerCommandDevice(
-  params: Omit<Parameters<typeof resolveCommandDevice>[0], 'androidAvdSelection'>,
+  params: PowerCommandDeviceParams,
 ): Promise<DeviceInfo> {
   return await resolveCommandDevice({ ...params, androidAvdSelection: 'include-stopped' });
 }
+
+/**
+ * Boot's device with its selection evidence. Boot alone reads the `--pick` opt-in; shutdown shares
+ * the stopped-AVD scope above and keeps refusing a tie. A tie refused without the opt-in names it.
+ */
+export async function resolveBootCommandSelection(
+  params: PowerCommandDeviceParams,
+): Promise<DeviceSelectionResult> {
+  if (params.session && !hasExplicitDeviceSelector(params.flags)) {
+    return resolveExistingSessionDeviceSelection(await resolvePowerCommandDevice(params));
+  }
+  try {
+    return await resolveTargetDeviceSelection(params.flags ?? {}, {
+      env: params.env,
+      androidAvdSelection: 'include-stopped',
+      bootPick: params.flags?.pick,
+    });
+  } catch (error) {
+    if (params.flags?.pick || !(error instanceof AppError) || error.code !== 'AMBIGUOUS_MATCH') {
+      throw error;
+    }
+    const hint = [error.details?.hint, BOOT_PICK_HINT].filter(Boolean).join(' ');
+    throw new AppError(error.code, error.message, { ...error.details, hint }, error);
+  }
+}
+
+// Conditional: a tie between booted devices stays ambiguous even with the opt-in.
+const BOOT_PICK_HINT = 'If they are all shut down, boot --pick newest boots one of them.';
 
 export async function refreshSessionDeviceIfNeeded(
   device: DeviceInfo,

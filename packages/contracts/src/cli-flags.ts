@@ -3,7 +3,7 @@ import type { RecordingExportQuality } from './recording-export-quality.ts';
 import type { BackMode } from './back-mode.ts';
 import type { ClickButton } from './click-button.ts';
 import type { SwipePattern } from './scroll-gesture.ts';
-import type { DeviceTarget, PlatformSelector } from '@agent-device/kernel/device';
+import type { BootPickPolicy, DeviceTarget, PlatformSelector } from '@agent-device/kernel/device';
 import type { SnapshotPreferredBackend } from '@agent-device/kernel/snapshot';
 import type {
   DaemonInstallSource,
@@ -140,6 +140,7 @@ export type CliFlags = CloudProviderProfileFields &
     foreground?: boolean;
     surface?: SessionSurface;
     headless?: boolean;
+    pick?: BootPickPolicy;
     restart?: boolean;
     noRecord?: boolean;
     /**

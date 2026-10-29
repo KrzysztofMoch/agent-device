@@ -3,7 +3,12 @@ import { CLICK_BUTTONS } from '@agent-device/contracts/click-button';
 import { SWIPE_PATTERNS } from '@agent-device/contracts/scroll-gesture';
 import { RECORDING_SCOPE_VALUES } from '@agent-device/contracts/recording';
 import { SESSION_SURFACES, type SessionAction } from '@agent-device/contracts/session';
-import { DEVICE_TARGETS, PLATFORM_SELECTORS, PUBLIC_PLATFORMS } from '@agent-device/kernel/device';
+import {
+  BOOT_PICK_POLICIES,
+  DEVICE_TARGETS,
+  PLATFORM_SELECTORS,
+  PUBLIC_PLATFORMS,
+} from '@agent-device/kernel/device';
 import { INTERNAL_COMMANDS, PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import { commandSupportsSettleObservation } from '@agent-device/command-registry/registry';
 import {
@@ -349,6 +354,7 @@ const SAFE_ACTION_FLAG_SPECS: Record<string, SafeFlagSpec> = {
   },
   [PUBLIC_COMMANDS.boot]: {
     booleans: [{ source: 'headless' }],
+    enums: [{ source: 'pick', values: BOOT_PICK_POLICIES }],
   },
   [PUBLIC_COMMANDS.close]: {
     booleans: [{ source: 'shutdown' }],

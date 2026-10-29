@@ -26,6 +26,8 @@ export type DeviceSelectionReason =
   | 'single-booted-local'
   | 'single-bootable-local'
   | 'single-app-installed-local'
+  /** `boot --pick newest` chose among several equally preferred, shut-down local devices. */
+  | 'newest-bootable-local'
   | 'preferred-local'
   | 'single-provider-device';
 

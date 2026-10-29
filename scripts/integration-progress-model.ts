@@ -357,6 +357,12 @@ function summarizeProviderScenarioFlagExclusions() {
       keys: ['headless', 'testIme'],
     },
     {
+      // Provider inventory never picks, so no provider-backed flow can observe this flag.
+      name: 'local boot tie-break',
+      owner: 'device-selection resolver and boot handler unit tests',
+      keys: ['pick'],
+    },
+    {
       name: 'open foreground auto-resolution (RFC prototype)',
       owner: 'daemon session-open-foreground lifecycle unit tests',
       keys: ['foreground'],

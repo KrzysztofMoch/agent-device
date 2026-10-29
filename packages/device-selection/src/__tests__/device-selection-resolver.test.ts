@@ -164,3 +164,111 @@ test('existing session binding is a distinct highest-precedence selection', () =
     bootOccurred: false,
   });
 });
+
+const shutDownSimulator = (id: string, name: string, osVersion: string): DeviceInfo => ({
+  platform: 'apple',
+  id,
+  name,
+  kind: 'simulator',
+  target: 'mobile',
+  appleOs: 'ios',
+  osVersion,
+  booted: false,
+});
+
+// ENG-1037: a stock Xcode install ships several shut-down iPhones of one runtime.
+const STOCK_SIMULATORS: DeviceInfo[] = [
+  shutDownSimulator('sim-17-pro', 'iPhone 17 Pro', '26.5'),
+  shutDownSimulator('sim-17', 'iPhone 17', '26.5'),
+  { ...shutDownSimulator('ipad-pro', 'iPad Pro 13-inch (M5)', '26.5'), appleOs: 'ipados' },
+];
+
+test('boot --pick newest settles a tie between shut-down devices that otherwise fails', async () => {
+  await assert.rejects(
+    () =>
+      resolveInventoryDeviceSelection({
+        devices: STOCK_SIMULATORS,
+        selector: { platform: 'ios' },
+        source: 'local',
+      }),
+    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
+  );
+
+  const selection = await resolveInventoryDeviceSelection({
+    devices: STOCK_SIMULATORS,
+    selector: { platform: 'ios' },
+    source: 'local',
+    bootPick: 'newest',
+  });
+
+  assert.equal(selection.device.id, 'sim-17');
+  assert.equal(selection.reason, 'newest-bootable-local');
+  assert.equal(selection.candidateCount, 3);
+});
+
+test('boot --pick newest orders OS versions numerically before names', async () => {
+  const selection = await resolveInventoryDeviceSelection({
+    devices: [
+      shutDownSimulator('older', 'iPhone 16', '26.9'),
+      shutDownSimulator('newer', 'iPhone 17', '26.10'),
+    ],
+    selector: { platform: 'ios' },
+    source: 'local',
+    bootPick: 'newest',
+  });
+
+  assert.equal(selection.device.id, 'newer');
+});
+
+test('boot --pick newest never overrides an already booted preferred device', async () => {
+  const booted = { ...shutDownSimulator('booted-older', 'iPhone 16', '18.6'), booted: true };
+  const selection = await resolveInventoryDeviceSelection({
+    devices: [shutDownSimulator('newer', 'iPhone 17', '26.5'), booted],
+    selector: { platform: 'ios' },
+    source: 'local',
+    bootPick: 'newest',
+  });
+
+  assert.equal(selection.device.id, booted.id);
+  assert.equal(selection.reason, 'single-booted-local');
+});
+
+test('boot --pick newest still refuses a tie between booted devices', async () => {
+  await assert.rejects(
+    () =>
+      resolveInventoryDeviceSelection({
+        devices: STOCK_SIMULATORS.map((device) => ({ ...device, booted: true })),
+        selector: { platform: 'ios' },
+        source: 'local',
+        bootPick: 'newest',
+      }),
+    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
+  );
+});
+
+test('boot --pick newest prefers a mobile AVD over a TV AVD that sorts first by name', async () => {
+  const selection = await resolveInventoryDeviceSelection({
+    devices: [
+      { ...STOPPED_ANDROID_EMULATOR, id: 'Android_TV', name: 'Android_TV', target: 'tv' },
+      STOPPED_ANDROID_EMULATOR,
+    ],
+    selector: { platform: 'android' },
+    source: 'local',
+    bootPick: 'newest',
+  });
+
+  assert.equal(selection.device.id, STOPPED_ANDROID_EMULATOR.id);
+});
+
+test('boot --pick newest never picks between provider devices', async () => {
+  await assert.rejects(
+    () =>
+      resolveInventoryDeviceSelection({
+        devices: STOCK_SIMULATORS,
+        selector: { platform: 'ios' },
+        source: 'provider',
+        bootPick: 'newest',
+      }),
+    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
+  );
+});

@@ -8,7 +8,9 @@ import {
   isIosFamily,
   isSerialAddressablePlatform,
   matchesDeviceSelector,
+  pickNewestBootableDevice,
   resolveDevice,
+  type BootPickPolicy,
   type DeviceInfo,
   type DeviceSelector,
 } from '@agent-device/kernel/device';
@@ -29,6 +31,8 @@ export type InventoryDeviceSelectionParams = {
    * simulators match the selector, the one with the app installed wins.
    */
   appleSimulatorAppTarget?: string;
+  /** The `boot --pick` opt-in: settles a tie between shut-down local devices instead of refusing. */
+  bootPick?: BootPickPolicy;
 };
 
 export async function resolveInventoryDeviceSelection(
@@ -52,6 +56,18 @@ export async function resolveInventoryDeviceSelection(
   const candidates = devices.filter((device) =>
     matchesDeviceSelector(device, selector, { includeExplicitSelectors: explicitSelector }),
   );
+  if (source === 'local' && !explicitSelector && params.bootPick === 'newest') {
+    const picked = pickNewestBootableDevice(candidates);
+    if (picked) {
+      return {
+        device: picked,
+        reason: 'newest-bootable-local',
+        source,
+        candidateCount: candidates.length,
+        bootOccurred: false,
+      };
+    }
+  }
   try {
     const device = await resolveDevice([...devices], selector);
     return describeSelection(device, candidates, { explicitSelector, source });

@@ -40,6 +40,15 @@ test('parseArgs recognizes command-specific flag combinations', async () => {
       },
     },
     {
+      label: 'boot --pick newest',
+      argv: ['boot', '--platform', 'ios', '--pick', 'newest'],
+      strictFlags: true,
+      assertParsed: (parsed) => {
+        assert.equal(parsed.command, 'boot');
+        assert.equal(parsed.flags.pick, 'newest');
+      },
+    },
+    {
       label: 'shutdown android emulator',
       argv: ['shutdown', '--platform', 'android', '--device', 'Pixel_9_Pro_XL'],
       strictFlags: true,
@@ -646,6 +655,11 @@ test('parseArgs scopes daemon and device flags to supported commands', () => {
   assert.throws(
     () => parseArgs(['auth', 'status', '--platform', 'ios'], { strictFlags: true }),
     /not supported for command auth/,
+  );
+
+  assert.throws(
+    () => parseArgs(['open', 'settings', '--pick', 'newest'], { strictFlags: true }),
+    /not supported for command open/,
   );
 });
 

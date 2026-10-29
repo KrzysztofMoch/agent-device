@@ -488,6 +488,35 @@ test('platform-only local selection reports inferred precedence instead of expli
   assert.equal(selection.source, 'local');
 });
 
+test.each([
+  ['ios', simulator, { ...simulator, id: 'sim-4', name: 'iPhone 17' }],
+  [
+    'android',
+    { ...androidEmulator, id: 'Pixel_9', name: 'Pixel 9', booted: false },
+    { ...androidEmulator, id: 'Pixel_10', name: 'Pixel 10', booted: false },
+  ],
+] as const)(
+  'boot --pick reaches %s inventory selection and nothing else picks',
+  async (platform, first, second) => {
+    const resolve = async (bootPick?: 'newest') =>
+      await withTestDeviceInventory(
+        { local: async () => [physical, first, second] },
+        async () =>
+          await resolveTargetDeviceSelectionInContext(
+            { platform },
+            { env: process.env, androidAvdSelection: 'include-stopped', bootPick },
+          ),
+      );
+
+    await assert.rejects(resolve(), (error: unknown) => {
+      return error instanceof AppError && error.code === 'AMBIGUOUS_MATCH';
+    });
+    const selection = await resolve('newest');
+    assert.equal(selection.device.id, first.id);
+    assert.equal(selection.reason, 'newest-bootable-local');
+  },
+);
+
 test('platform-only provider selection reports provider inference', async () => {
   const selection = await withTestDeviceInventory(
     {

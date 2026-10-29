@@ -1,11 +1,17 @@
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import type { CommandResultMap } from '@agent-device/command-registry/command-result';
-import { DEVICE_KINDS, DEVICE_TARGETS, PUBLIC_PLATFORMS } from '@agent-device/kernel/device';
+import {
+  BOOT_PICK_POLICIES,
+  DEVICE_KINDS,
+  DEVICE_TARGETS,
+  PUBLIC_PLATFORMS,
+} from '@agent-device/kernel/device';
 import {
   booleanField,
   booleanSchema,
   integerField,
+  enumField,
   enumSchema,
   looseObjectSchema,
   numberSchema,
@@ -51,10 +57,16 @@ const targetShutdownResultSchema: JsonSchema = objectSchema(
  * commands, not interaction commands, so no settle graft applies here.
  */
 export const DEVICE_MANAGEMENT_COMMAND_OUTPUT_SCHEMAS = {
-  boot: objectSchema({ ...deviceHeaderProperties, booted: { type: 'boolean', const: true } }, [
-    ...deviceHeaderRequired,
-    'booted',
-  ]),
+  boot: objectSchema(
+    {
+      ...deviceHeaderProperties,
+      booted: { type: 'boolean', const: true },
+      selection: looseObjectSchema(
+        'How the device was chosen: reason, source, candidateCount, bootOccurred.',
+      ),
+    },
+    [...deviceHeaderRequired, 'booted'],
+  ),
   shutdown: objectSchema({ ...deviceHeaderProperties, shutdown: targetShutdownResultSchema }, [
     ...deviceHeaderRequired,
     'shutdown',
@@ -78,6 +90,10 @@ const bootCommandMetadata = defineFieldCommandMetadata(
   'Boot or prepare the selected device or simulator so later commands can target it. The device is chosen through the device-selection inputs, not by naming it here.',
   {
     headless: booleanField('Boot without showing simulator UI when supported.'),
+    pick: enumField(
+      BOOT_PICK_POLICIES,
+      'When no device is named and several equally preferred devices match, all shut down, boot one instead of failing: newest picks mobile over TV, then the newest OS version, then the name, which alone decides for stopped Android AVDs because they report no OS version. Several booted matches still fail.',
+    ),
     timeoutMs: integerField(
       'Startup budget in milliseconds. Bounds the boot wait, so a never-booted Simulator can finish its first-boot migration or a cold emulator its boot; omit for the default startup behavior.',
       { min: 1 },
@@ -92,7 +108,7 @@ const shutdownCommandMetadata = defineFieldCommandMetadata(
 );
 
 const bootCliSchema = {
-  allowedFlags: ['headless', 'timeoutMs'],
+  allowedFlags: ['headless', 'pick', 'timeoutMs'],
 } as const satisfies CommandSchemaOverride;
 
 const devicesCliSchema = {} as const satisfies CommandSchemaOverride;
@@ -106,6 +122,7 @@ const commonCliReader: CliReader = (_positionals, flags) => commonInputFromFlags
 const bootCliReader: CliReader = (_positionals, flags) => ({
   ...commonInputFromFlags(flags),
   headless: flags.headless,
+  pick: flags.pick,
   timeoutMs: flags.timeoutMs,
 });
 
