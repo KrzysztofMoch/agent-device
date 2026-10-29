@@ -481,13 +481,21 @@ function assertWebDriverCalls(calls: readonly CloudWebDriverHttpCall[], leaseId:
     'POST /wd/hub/session/wd-1/appium/device/install_app',
     'POST /wd/hub/session/wd-1/appium/device/activate_app',
     'POST /wd/hub/session/wd-1/actions',
-    'POST /wd/hub/session/wd-1/keys',
+    'POST /wd/hub/session/wd-1/element/focused-field/clear',
+    'POST /wd/hub/session/wd-1/element/focused-field/value',
     'GET /wd/hub/session/wd-1/source',
     'DELETE /wd/hub/session/wd-1',
     'GET /app-automate/sessions/wd-1.json',
   ]) {
     assert.ok(paths.includes(expected), `missing WebDriver transcript call: ${expected}`);
   }
+  const clearIndex = paths.indexOf('POST /wd/hub/session/wd-1/element/focused-field/clear');
+  const valueIndex = paths.indexOf('POST /wd/hub/session/wd-1/element/focused-field/value');
+  assert.ok(clearIndex < valueIndex);
+  assert.deepEqual(calls[valueIndex]?.body, {
+    text: 'hello cloud',
+    value: Array.from('hello cloud'),
+  });
   const create = calls.find((call) => call.path === '/wd/hub/session');
   assert.deepEqual(create?.body, {
     capabilities: {

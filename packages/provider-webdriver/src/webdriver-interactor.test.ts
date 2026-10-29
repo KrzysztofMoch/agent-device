@@ -18,15 +18,18 @@ test('fill withholds keys until the tapped point holds text-entry focus', async 
   world.activeRects = ['none', 'none', CONTAINS_TAP];
 
   const result = await runFill(world);
-
   assert.equal(result?.textEntryReadiness, 'focused-element');
+  assert.deepEqual(vi.mocked(world.client.clearElement).mock.calls, [['tapped']]);
+  assert.deepEqual(vi.mocked(world.client.sendElementKeys).mock.calls, [
+    ['tapped', 'user@example.com'],
+  ]);
   assert.deepEqual(world.transcript, [
-    'keyboard',
     'active',
     'tap',
     'active',
     'active',
     'active',
+    'clear',
     'keys',
   ]);
 });
@@ -35,24 +38,22 @@ test('fill withholds keys until the tapped point holds text-entry focus', async 
 // whose keyboard is already up. The keyboard says "a field is focused" both
 // before and after, so only the focused element's own geometry can tell whether
 // OUR tap moved focus.
-test('fill accepts a keyboard-up second field once focus lands on the tapped point', async () => {
+test('fill accepts a second field once focus lands on the tapped point', async () => {
   const world = createTextEntryWorld();
-  world.keyboardShown = [true];
   world.focusedBeforeTap = PREVIOUS_FIELD;
   world.activeRects = [CONTAINS_TAP];
 
   const result = await runFill(world);
 
   assert.equal(result?.textEntryReadiness, 'focused-element');
-  assert.deepEqual(world.transcript, ['keyboard', 'active', 'tap', 'active', 'keys']);
+  assert.deepEqual(world.transcript, ['active', 'tap', 'active', 'clear', 'keys']);
 });
 
 // P1, the two-field misdelivery: email filled, keyboard stays up, the password
 // tap misses. Focus never leaves the email field, so a global `/keys` would
 // append the password to the EMAIL field while reporting success.
-test('fill refuses when a keyboard-up tap misses and focus stays on the previous field', async () => {
+test('fill refuses when a tap misses and focus stays on the previous field', async () => {
   const world = createTextEntryWorld();
-  world.keyboardShown = [true];
   world.focusedBeforeTap = PREVIOUS_FIELD;
   world.activeRects = [PREVIOUS_FIELD];
 
@@ -63,8 +64,7 @@ test('fill refuses when a keyboard-up tap misses and focus stays on the previous
     return true;
   });
 
-  // The decisive assertion: no keys reached the field the previous fill focused.
-  assert.equal(world.transcript.includes('keys'), false);
+  assert.ok(!world.transcript.some((step) => step === 'clear' || step === 'keys'));
 });
 
 // Found on a live AWS Device Farm iPhone 16: tapping Safari's collapsed address
@@ -93,59 +93,38 @@ test('fill accepts a re-fill of the already-focused field it tapped', async () =
   assert.equal(result?.textEntryReadiness, 'focused-element');
 });
 
-test('fill falls back to the keyboard transition when there is no active-element route', async () => {
+for (const keyboardRoute of ['ok', 'unimplemented', 'failing'] as const) {
+  test(`fill refuses before tapping when focused-element lookup is unsupported (${keyboardRoute} keyboard)`, async () => {
+    const world = createTextEntryWorld();
+    world.activeRoute = 'unimplemented';
+    world.keyboardRoute = keyboardRoute;
+
+    await assert.rejects(runFill(world), (error: AppError) => {
+      assert.equal(error.code, 'UNSUPPORTED_OPERATION');
+      assert.equal(error.details?.reason, 'text_entry_clear_target_unavailable');
+      return true;
+    });
+
+    assert.deepEqual(world.transcript, ['active']);
+    assert.deepEqual(world.probeTimeouts, [1_500]);
+  });
+}
+
+test('fill refuses when focused-element lookup becomes unsupported after the tap', async () => {
   const world = createTextEntryWorld();
   world.activeRoute = 'unimplemented';
-  world.keyboardShown = [false, false, true];
-
-  const result = await runFill(world);
-
-  assert.equal(result?.textEntryReadiness, 'keyboard-shown');
-  assert.deepEqual(world.transcript, [
-    'keyboard',
-    'active',
-    'tap',
-    'active',
-    'keyboard',
-    'keyboard',
-    'keys',
-  ]);
-});
-
-// Without an active-element route, a keyboard that was ALREADY up witnesses
-// nothing about the new field — the exact silent misdelivery P1 names.
-test('fill refuses a keyboard-up tap when the driver cannot report the focused field', async () => {
-  const world = createTextEntryWorld();
-  world.activeRoute = 'unimplemented';
-  world.keyboardShown = [true];
+  world.client.activeElementReference = async () => {
+    world.transcript.push('active');
+    return { id: 'previous' };
+  };
 
   await assert.rejects(runFill(world), (error: AppError) => {
-    assert.match(error.message, /cannot report which field holds focus/);
-    assert.equal(error.details?.reason, 'text_entry_focus_not_observed');
+    assert.equal(error.code, 'UNSUPPORTED_OPERATION');
+    assert.equal(error.details?.reason, 'text_entry_clear_target_unavailable');
     return true;
   });
 
-  assert.equal(world.transcript.includes('keys'), false);
-});
-
-// The last path that typed without evidence. It reported ordinary success, and
-// nothing renders `textEntryReadiness`, so it read to a caller exactly like a
-// fill that worked — the #1658 false success this change exists to remove.
-test('fill refuses when the driver implements neither focus route', async () => {
-  const world = createTextEntryWorld();
-  world.activeRoute = 'unimplemented';
-  world.keyboardRoute = 'unimplemented';
-
-  await assert.rejects(runFill(world), (error: AppError) => {
-    assert.equal(error.code, 'COMMAND_FAILED');
-    assert.match(error.message, /reports neither the focused element nor keyboard state/);
-    // A capability gap, not a missed tap: the caller's next move differs.
-    assert.equal(error.details?.reason, 'text_entry_focus_unobservable');
-    assert.match(String(error.details?.hint), /press <target> followed by type <text>/);
-    return true;
-  });
-
-  assert.equal(world.transcript.includes('keys'), false);
+  assert.deepEqual(world.transcript, ['active', 'tap', 'active']);
 });
 
 // The #1658 report is "fill answered Filled N chars while the field kept its
@@ -162,22 +141,22 @@ test('fill refuses without typing when nothing ever takes focus', async () => {
     return true;
   });
 
-  assert.equal(world.transcript.includes('keys'), false);
+  assert.ok(!world.transcript.some((step) => step === 'clear' || step === 'keys'));
 });
 
 // A probe that FAILED is not a driver without the feature. Swallowing a dead
 // session or a grid outage as "unsupported" would degrade it into a blind type.
-test('fill propagates a failing keyboard probe instead of typing blind', async () => {
+test('fill propagates a failing pre-tap focus probe instead of typing blind', async () => {
   const world = createTextEntryWorld();
-  world.keyboardRoute = 'failing';
+  world.activeRoute = 'failing';
 
   await assert.rejects(runFill(world), (error: AppError) => {
-    assert.match(error.message, /invalid session id/);
+    assert.match(error.message, /active element exploded/);
     return true;
   });
 
   // It threw on a pre-tap probe, so the device was never touched at all.
-  assert.equal(world.transcript.includes('tap'), false);
+  assert.deepEqual(world.transcript, ['active']);
 });
 
 // Post-tap the device HAS been touched, so one transient grid error must not
@@ -194,16 +173,16 @@ test('fill tolerates a transient probe failure and still witnesses focus', async
 
 // ...but a budget that expires without a single answered probe is a broken
 // session, and must surface as itself rather than as "the tap missed".
-test('fill rethrows the probe failure when no probe ever answers', async () => {
+test('fill rethrows the probe failure when no post-tap probe ever answers', async () => {
   const world = createTextEntryWorld();
-  world.activeRoute = 'failing';
+  world.activeFailuresAfterTap = Number.POSITIVE_INFINITY;
 
   await assert.rejects(runFill(world), (error: AppError) => {
-    assert.match(error.message, /active element exploded/);
+    assert.match(error.message, /transient grid blip/);
     return true;
   });
 
-  assert.equal(world.transcript.includes('keys'), false);
+  assert.ok(!world.transcript.some((step) => step === 'clear' || step === 'keys'));
 });
 
 // P2: a probe handed the full fixed timeout near the deadline would finish well
@@ -223,6 +202,7 @@ test('fill caps each probe timeout by the readiness budget remaining', async () 
   // The budget is 2s and probes start at t=0, so once under 1.5s remain the cap
   // is the remainder, and the final probe gets exactly one poll interval.
   assert.equal(timeouts.at(-1), 100);
+  assert.ok(!world.transcript.some((step) => step === 'clear' || step === 'keys'));
 });
 
 /**
@@ -231,25 +211,17 @@ test('fill caps each probe timeout by the readiness budget remaining', async () 
  * past the whole readiness budget is safe for every case — once readiness
  * resolves there are no pending timers left to fire.
  */
-// `fill <target> ""` is the clear-field primitive (#2063). This backend's fill is tap +
-// sendKeys and owns no clear mechanism, so an empty fill must refuse up front — sending zero
-// keys and reporting success would claim a clear that never ran, before even touching the
-// device.
-test('fill refuses empty text as an unsupported clear rather than a vacuous success', async () => {
+test('fill clears an empty replacement without sending keys', async () => {
   const world = createTextEntryWorld();
+  world.activeRects = [CONTAINS_TAP];
   const interactor = createWebDriverInteractor({
     client: world.client,
     backend: 'xctest',
     capabilities: createCloudWebDriverCapabilities({ provider: 'test', platform: 'ios' }),
   });
 
-  await assert.rejects(interactor.fill(12, 24, ''), (error: AppError) => {
-    assert.equal(error.code, 'UNSUPPORTED_OPERATION');
-    assert.match(error.message, /clear field/);
-    return true;
-  });
-  // Fail-closed means untouched: no tap, no keys, no probes reached the device.
-  assert.deepEqual(world.transcript, []);
+  await interactor.fill(12, 24, '');
+  assert.deepEqual(world.transcript, ['active', 'tap', 'active', 'clear']);
 });
 
 test('iOS WebDriver interactor routes snapshots through the acquisition adapter', async () => {
@@ -403,8 +375,8 @@ async function runFill(world: ReturnType<typeof createTextEntryWorld>) {
 }
 
 /**
- * Records the request order `fill` produces. The ordering IS the fix: a `keys`
- * entry that follows `tap` with no keyboard evidence between them is the bug.
+ * Records the request order `fill` produces. Clearing or typing before the
+ * tapped field holds confirmed focus is the bug.
  */
 type FocusedElement = {
   id: string;
@@ -427,7 +399,6 @@ function createTextEntryWorld() {
   const world = {
     transcript: [] as string[],
     probeTimeouts: [] as Array<number | undefined>,
-    keyboardShown: [true] as boolean[],
     /** How the driver answers each route: normally, not at all, or with a real failure. */
     keyboardRoute: 'ok' as 'ok' | 'unimplemented' | 'failing',
     activeRoute: 'ok' as 'ok' | 'unimplemented' | 'failing',
@@ -446,9 +417,12 @@ function createTextEntryWorld() {
       world.tapped = true;
     },
     releaseActions: async () => {},
-    sendKeys: async () => {
+    clearElement: vi.fn(async () => {
+      world.transcript.push('clear');
+    }),
+    sendElementKeys: vi.fn(async () => {
       world.transcript.push('keys');
-    },
+    }),
     activeElementReference: (timeoutMs?: number) =>
       world.client
         .activeElement(timeoutMs)
@@ -484,10 +458,7 @@ function createTextEntryWorld() {
         // why the client classifies on the W3C error code instead.
         throw new AppError('COMMAND_FAILED', 'invalid session id', { status: 404 });
       }
-      // The last programmed reading is what the keyboard stays at.
-      return world.keyboardShown.length > 1
-        ? world.keyboardShown.shift()!
-        : world.keyboardShown[0]!;
+      return true;
     },
   } as unknown as WebDriverClient;
   return world;
