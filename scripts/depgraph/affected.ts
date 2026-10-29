@@ -48,6 +48,36 @@ export function collectDependents(file: string, edges: readonly GraphEdge[]): De
   return { direct, all, transitiveOnly: all.filter((entry) => !directSet.has(entry)) };
 }
 
+export type ExecutableDependentSet = DependentSet & {
+  /** Executable dependents that value edges alone do not reach: the path crosses a dynamic import. */
+  beyondValue: string[];
+};
+
+/**
+ * Reverse reachability over value and dynamic edges: every file whose code can run the target,
+ * including handlers a route loads through `import()`. Kept apart from `collectDependents` so the
+ * value count keeps its R4 meaning; type-only edges stay excluded because they never run.
+ * Reachability here is not a removability claim.
+ */
+export function collectExecutableDependents(
+  file: string,
+  edges: readonly GraphEdge[],
+): ExecutableDependentSet {
+  const executableGraph = importGraph(edges, EXECUTABLE_EDGES, [file]);
+  const direct = getPredecessors(executableGraph, file)
+    .map((node) => node.id)
+    .sort();
+  const all = [...reachable(executableGraph, file, 'incoming')].sort();
+  const directSet = new Set(direct);
+  const valueSet = new Set(collectDependents(file, edges).all);
+  return {
+    direct,
+    all,
+    transitiveOnly: all.filter((entry) => !directSet.has(entry)),
+    beyondValue: all.filter((entry) => !valueSet.has(entry)),
+  };
+}
+
 /**
  * Direct importers over the edge kinds `collectDependents` leaves out. A pure vocabulary module
  * has zero value dependents and dozens of type-only ones; reporting only the value count there
@@ -131,6 +161,9 @@ export function commandsReaching(
     .filter((chain) => closureFor(chain.entry).has(file))
     .sort((left, right) => left.command.localeCompare(right.command));
 }
+
+/** Import reachability cannot prove complete attribution across injected calls. */
+export type CommandAttribution = { kind: 'partial'; reason: 'injected-calls-not-modeled' };
 
 export type GuaranteeRow = {
   path: string;

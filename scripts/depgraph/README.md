@@ -17,12 +17,25 @@ pnpm depgraph affected packages/host-kit/src/command.ts # bounded text
 pnpm depgraph affected packages/daemon/src/core/ref-frame.ts --json --limit 25
 ```
 
-Reverse reachability over the value-edge graph, plus the three lookups that used to follow it:
+Reverse reachability over the value-edge graph, plus the lookups that used to follow it:
 the `scripts/check-affected/` gate plan for the dependent set, the public commands whose handler
 chain reaches the file (value + dynamic edges, because handlers load through `import()`) with
 their owning live iOS scenarios when that manifest is in the tree, and the ADR 0011
 guarantee-matrix cells the file implements. See docs/agents/testing.md § "Before editing a shared
 module".
+
+Two fields keep an empty or short list from reading as "nothing else is affected":
+
+- `executableDependents` is a second reverse reachability over value + dynamic edges.
+  `dependents` keeps its value-only meaning; `beyondValue` lists the files that only a dynamic
+  import connects. Type-only edges stay out of both.
+- `commandAttribution` marks every `commands` and `liveOwners` list as `partial`, with reason
+  `injected-calls-not-modeled`. These lists follow value and dynamic import edges. Calls through injected
+  functions can reach code without an import path from a command handler. An empty list means no
+  handler import path was found; other commands may still depend on the file.
+
+Use these lists as lower bounds when you plan a change. They do not identify removable imports,
+prove test coverage, or name the missing commands. `gates` comes from the value dependents only.
 
 ## When to reach for this
 
