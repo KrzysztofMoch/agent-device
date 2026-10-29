@@ -1,0 +1,339 @@
+{
+  "description": "Independent trait cases at producer seams. Bridge words and Limrun trait names are producer-specific inputs, not a raw encoding equivalence. Limrun keeps reported types, uses IsEditing for a focus witness, and recognizes TabButton during collapsed-bar recovery. XCTest takes XCUIElement types and is not applicable to trait classification; live conformance remains its authority. Absent expected keys mean absent facts. Basis describes each producer input: captured bridge words are recorded in the existing tree tests; rule inputs are synthetic. Expected fields pin producer rules, including unobserved precedence branches. Limrun inputs are synthetic seam cases. Captured words do not establish live XCTest parity.",
+  "cases": [
+    {
+      "name": "tab trait overrides cell type",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "captured",
+        "input": {
+          "automationType": 75,
+          "traits": "146297323520"
+        },
+        "expected": {
+          "type": "Button"
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "TabButton makes a collapsed-bar tab candidate",
+        "input": {
+          "type": "RadioButton",
+          "traits": ["Button", "TabButton"]
+        },
+        "expected": {
+          "tabCandidate": true
+        },
+        "seam": "tab"
+      }
+    },
+    {
+      "name": "cell without tab trait",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 75,
+          "traits": "146028888064"
+        },
+        "expected": {
+          "type": "Cell"
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "Button without TabButton is not a collapsed-bar tab candidate",
+        "input": {
+          "type": "RadioButton",
+          "traits": ["Button"]
+        },
+        "expected": {
+          "tabCandidate": false
+        },
+        "seam": "tab"
+      }
+    },
+    {
+      "name": "compose text area",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "captured",
+        "input": {
+          "automationType": 0,
+          "traits": "140746078552064"
+        },
+        "expected": {
+          "type": "TextView",
+          "editable": true,
+          "password": false
+        }
+      }
+    },
+    {
+      "name": "text entry without area",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "8590196736"
+        },
+        "expected": {
+          "type": "TextField",
+          "editable": true,
+          "password": false
+        }
+      }
+    },
+    {
+      "name": "secure text entry takes precedence",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "140746095330304"
+        },
+        "expected": {
+          "type": "SecureTextField",
+          "editable": true,
+          "password": true
+        }
+      }
+    },
+    {
+      "name": "search text entry",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "140746078553088"
+        },
+        "expected": {
+          "type": "SearchField",
+          "editable": true,
+          "password": false
+        }
+      }
+    },
+    {
+      "name": "area without text entry",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "140746078289920"
+        },
+        "expected": {
+          "type": "Other"
+        }
+      }
+    },
+    {
+      "name": "search bit without text entry",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "1024"
+        },
+        "expected": {
+          "type": "Other"
+        }
+      }
+    },
+    {
+      "name": "secure bit without text entry",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "16777216"
+        },
+        "expected": {
+          "type": "Other"
+        }
+      }
+    },
+    {
+      "name": "declared input type takes precedence",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "not-applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 45,
+          "traits": "140746078552064"
+        },
+        "expected": {
+          "type": "SearchField",
+          "editable": true,
+          "password": false
+        }
+      }
+    },
+    {
+      "name": "selected",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "8"
+        },
+        "expected": {
+          "type": "Other",
+          "selected": true
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "Selected reports selection",
+        "input": {
+          "type": "Other",
+          "traits": ["Selected"]
+        },
+        "expected": {
+          "selected": true
+        },
+        "seam": "selection"
+      }
+    },
+    {
+      "name": "unselected",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "rule",
+        "input": {
+          "automationType": 0,
+          "traits": "0"
+        },
+        "expected": {
+          "type": "Other"
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "without Selected the selection fact is absent",
+        "input": {
+          "type": "Other",
+          "traits": ["Button"]
+        },
+        "expected": {},
+        "seam": "selection"
+      }
+    },
+    {
+      "name": "editing",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "captured",
+        "input": {
+          "automationType": 57,
+          "traits": "140883519602688"
+        },
+        "expected": {
+          "type": "Map",
+          "focused": true
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "IsEditing provides a focus witness",
+        "input": {
+          "type": "TextView",
+          "traits": ["IsEditing"]
+        },
+        "expected": {
+          "focusWitness": true
+        },
+        "seam": "focus"
+      }
+    },
+    {
+      "name": "not editing",
+      "applicability": {
+        "bridge": "applicable",
+        "limrun": "applicable",
+        "runner": "not-applicable"
+      },
+      "bridge": {
+        "basis": "captured",
+        "input": {
+          "automationType": 57,
+          "traits": "140883517505536"
+        },
+        "expected": {
+          "type": "Map"
+        }
+      },
+      "limrun": {
+        "basis": "rule",
+        "fact": "without IsEditing no focus witness is reported",
+        "input": {
+          "type": "TextView",
+          "traits": ["TextEntry"]
+        },
+        "expected": {
+          "focusWitness": false
+        },
+        "seam": "focus"
+      }
+    }
+  ]
+}

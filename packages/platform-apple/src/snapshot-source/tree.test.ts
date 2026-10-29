@@ -771,3 +771,59 @@ test('the element-type names the presented-surface rule reads are the ones this 
     assert.equal(decoded.nodes[1]?.type, name, `raw element type ${rawValue}`);
   }
 });
+
+const traitClassification = JSON.parse(
+  fs.readFileSync(
+    new URL('../../../../contracts/fixtures/ios-trait-classification.json', import.meta.url),
+    'utf8',
+  ),
+) as {
+  cases: Array<{
+    name: string;
+    applicability: { bridge: string; limrun: string; runner: string };
+    bridge: {
+      basis: 'captured' | 'rule';
+      input: { automationType: number; traits: string };
+      expected: Record<string, string | boolean>;
+    };
+    limrun?: { basis: string; fact: string; seam: string };
+  }>;
+};
+
+test('trait corpus declares producer input provenance and applicability', () => {
+  assert.ok(traitClassification.cases.length > 0);
+  assert.deepEqual(
+    new Set(traitClassification.cases.flatMap((row) => (row.limrun ? [row.limrun.seam] : []))),
+    new Set(['tab', 'selection', 'focus']),
+  );
+  for (const row of traitClassification.cases) {
+    assert.equal(row.applicability.bridge, 'applicable', row.name);
+    assert.equal(row.applicability.runner, 'not-applicable', row.name);
+    assert.equal(row.applicability.limrun, row.limrun ? 'applicable' : 'not-applicable', row.name);
+    assert.ok(['captured', 'rule'].includes(row.bridge.basis), row.name);
+    if (row.limrun) {
+      assert.equal(row.limrun.basis, 'rule', row.name);
+      assert.ok(row.limrun.fact.length > 0, row.name);
+    }
+  }
+});
+
+for (const row of traitClassification.cases) {
+  test(`bridge trait ${row.bridge.basis} input: ${row.name}`, () => {
+    const node = decodeSnapshotBridgeTree(
+      {
+        [automationType]: row.bridge.input.automationType,
+        [traits]: row.bridge.input.traits,
+        [children]: [],
+      },
+      { truncated: false },
+      limits,
+    ).nodes[0]!;
+    const actual = Object.fromEntries(
+      (['type', 'editable', 'password', 'selected', 'focused'] as const).flatMap((key) =>
+        node[key] === undefined ? [] : [[key, node[key]]],
+      ),
+    );
+    assert.deepEqual(actual, row.bridge.expected, row.name);
+  });
+}
