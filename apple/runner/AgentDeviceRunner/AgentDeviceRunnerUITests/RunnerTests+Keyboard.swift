@@ -280,23 +280,14 @@ extension RunnerTests {
       return (wasVisible: wasVisible, pressed: true, visible: isKeyboardVisible(app: app))
     }
 
-    var typed = false
-    let exceptionMessage = RunnerObjCExceptionCatcher.catchException({
-      app.typeText(XCUIKeyboardKey.return.rawValue)
-      typed = true
-    })
-    if let exceptionMessage {
-      NSLog(
-        "AGENT_DEVICE_RUNNER_KEYBOARD_RETURN_IGNORED_EXCEPTION=%@",
-        exceptionMessage
-      )
+    guard typeKeyboardReturn({ app.typeText(XCUIKeyboardKey.return.rawValue) }) else {
       if let singleTarget = singleTextEntryElement(app: app) {
         return pressKeyboardReturn(on: singleTarget, app: app, wasVisible: wasVisible)
       }
       return (wasVisible: wasVisible, pressed: false, visible: isKeyboardVisible(app: app))
     }
     sleepFor(0.2)
-    return (wasVisible: wasVisible, pressed: typed, visible: isKeyboardVisible(app: app))
+    return (wasVisible: wasVisible, pressed: true, visible: isKeyboardVisible(app: app))
 #else
     return (wasVisible: false, pressed: false, visible: false)
 #endif
@@ -322,15 +313,13 @@ extension RunnerTests {
     wasVisible: Bool
   ) -> (wasVisible: Bool, pressed: Bool, visible: Bool) {
 #if os(iOS)
-    let exceptionMessage = RunnerObjCExceptionCatcher.catchException({
+    // `element` is bound by index, and the keyboard the tap raises shifts those indices, so the
+    // return goes to whatever the tap focused rather than to a re-resolved `element`.
+    let typed = typeKeyboardReturn({
       element.tap()
-      element.typeText(XCUIKeyboardKey.return.rawValue)
+      app.typeText(XCUIKeyboardKey.return.rawValue)
     })
-    if let exceptionMessage {
-      NSLog(
-        "AGENT_DEVICE_RUNNER_KEYBOARD_RETURN_TARGET_IGNORED_EXCEPTION=%@",
-        exceptionMessage
-      )
+    guard typed else {
       return (wasVisible: wasVisible, pressed: false, visible: isKeyboardVisible(app: app))
     }
     sleepFor(0.2)
@@ -338,6 +327,26 @@ extension RunnerTests {
 #else
     return (wasVisible: wasVisible, pressed: false, visible: false)
 #endif
+  }
+
+  /// Types a return, false when nothing was typed: an ObjC exception, or XCTest's refusal to type
+  /// with nothing focused. XCTest records that refusal as an issue, which would invalidate the runner
+  /// session, so it alone is dropped; every other issue is recorded as usual.
+  private func typeKeyboardReturn(_ type: () -> Void) -> Bool {
+    let (issues, exceptionMessage) = holdingRecordedIssues(type)
+    let noFocus = issues.filter { Self.isNoKeyboardFocusIssue($0.compactDescription) }
+    issues.filter { !Self.isNoKeyboardFocusIssue($0.compactDescription) }.forEach { record($0) }
+    if !noFocus.isEmpty { NSLog("AGENT_DEVICE_RUNNER_KEYBOARD_RETURN_NO_FOCUS") }
+    if let exceptionMessage {
+      NSLog("AGENT_DEVICE_RUNNER_KEYBOARD_RETURN_IGNORED_EXCEPTION=%@", exceptionMessage)
+    }
+    return noFocus.isEmpty && exceptionMessage == nil
+  }
+
+  /// XCTest names this refusal only in its English issue text, as it does the AX failures that
+  /// `isSuppressedAxSnapshotIssueDescription` matches.
+  static func isNoKeyboardFocusIssue(_ description: String) -> Bool {
+    description.contains("Neither element nor any descendant has keyboard focus")
   }
 
   private func singleTextEntryElement(app: XCUIApplication) -> XCUIElement? {
