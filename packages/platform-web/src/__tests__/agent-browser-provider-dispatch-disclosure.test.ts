@@ -69,7 +69,7 @@ function backendRefused(error: string): ExecResult {
 
 /** Answers the pointer sends the given way, and refuses everything else as the backend would. */
 function answerPointerSends(
-  failOn: 'down' | 'up' | 'press',
+  failOn: 'down' | 'up' | 'select',
 ): (args: readonly string[]) => ExecResult {
   return (cliArgs) => {
     const command = cliArgs.slice(0, 2).join(' ');
@@ -98,19 +98,38 @@ async function clickRefusedOnPointerDown(): Promise<void> {
   );
 }
 
-/** Coordinate `fill`: the whole click landed, the select-all press was refused. */
+/** Coordinate `fill`: the whole click landed, the in-page selection was refused. */
 async function fillRefusedAfterClick(): Promise<void> {
   let pointerSends = 0;
   await withScriptedBackend(
     (cliArgs) => {
       if (cliArgs[0] === 'mouse') pointerSends += 1;
-      return answerPointerSends('press')(cliArgs);
+      return answerPointerSends('select')(cliArgs);
     },
     async (provider) => {
       await provider.fill(20, 30, 'Ada');
       assert.equal(pointerSends, 3);
     },
   );
+}
+
+/** Coordinate `fill`: the whole click landed, but the in-page selection found no field it reached. */
+async function fillFocusNotObservedAfterClick(): Promise<void> {
+  await withScriptedBackend(
+    (cliArgs) =>
+      agentBrowserJsonResult(
+        { success: true, data: cliArgs[0] === 'eval' ? { result: 'not-clicked' } : {} },
+        0,
+      ),
+    async (provider) => {
+      await provider.fill(20, 30, 'Ada');
+    },
+  ).catch((error: unknown) => {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.code, 'COMMAND_FAILED');
+    assert.equal(error.details?.reason, 'text_entry_focus_not_observed');
+    throw error;
+  });
 }
 
 /** `scroll --duration` long enough to pace into steps: two landed, the third was refused. */
@@ -165,9 +184,13 @@ const DRIVERS: Record<string, { drive: () => Promise<unknown>; dispatchedSteps?:
     drive: scrollRefusedOnThirdStep,
     dispatchedSteps: 2,
   },
-  'web-agent-browser.fill-selection-press-refused': {
+  'web-agent-browser.fill-selection-refused': {
     drive: fillRefusedAfterClick,
     dispatchedSteps: 3,
+  },
+  'web-agent-browser.fill-focus-not-observed': {
+    drive: fillFocusNotObservedAfterClick,
+    dispatchedSteps: 4,
   },
 };
 

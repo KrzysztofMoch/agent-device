@@ -1,6 +1,6 @@
 import { execFailureDetails } from '@agent-device/host-kit/command';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
-import { hostPlatform, type OwnedProcessRecordStore } from '@agent-device/host-kit/process';
+import type { OwnedProcessRecordStore } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
 import {
   AppError,
@@ -10,6 +10,10 @@ import {
 
 import type { Rect } from '@agent-device/kernel/snapshot';
 import type { HostEnvironment } from '@agent-device/kernel/source-value';
+import {
+  buildSelectFocusedContentEvalScript,
+  readSelectFocusedContentOutcome,
+} from './agent-browser-select-content.ts';
 import {
   buildAudioProbeEvalScript,
   normalizeAgentBrowserAudioProbeResult,
@@ -109,7 +113,10 @@ export function createAgentBrowserWebProvider(options: AgentBrowserProviderOptio
       const sends = createAgentBrowserSendLedger(runJson);
       try {
         await clickCoordinates(sends.send, x, y);
-        await sends.send(['press', selectAllShortcut()]);
+        const outcome = readSelectFocusedContentOutcome(
+          await sends.send(['eval', buildSelectFocusedContentEvalScript(x, y)]),
+        );
+        if (!outcome.selected) throw textEntryFocusNotObservedError(x, y, outcome.cause);
         if (text.length === 0) {
           // The clear-field request (#2063): typing zero characters over the selection would
           // leave the old value selected but intact, so the selection must be deleted instead.
@@ -176,8 +183,9 @@ function createAgentBrowserSendLedger(runJson: (args: string[]) => Promise<unkno
   let dispatchedSteps = 0;
   return {
     send: async (args) => {
-      await runJson(args);
+      const data = await runJson(args);
       dispatchedSteps += 1;
+      return data;
     },
     discloseDispatch(error: unknown): unknown {
       return discloseDispatchAfterSteps(error, dispatchedSteps);
@@ -788,12 +796,25 @@ function agentBrowserCliRefusalDispatch(parsed: JsonObject): {
     : {};
 }
 
-function browserRefSelector(ref: string): string {
-  return ref.startsWith('@') ? ref : `@${ref}`;
+/**
+ * The click reached the page but no editable field there took focus, so typing would go to nothing
+ * or to whatever else holds focus. The fill is refused before it sends any text or key.
+ */
+function textEntryFocusNotObservedError(x: number, y: number, cause: string): AppError {
+  return new AppError(
+    'COMMAND_FAILED',
+    `fill clicked (${x}, ${y}) but no editable text field there took focus (${cause}), so the text was not sent`,
+    {
+      reason: 'text_entry_focus_not_observed',
+      x,
+      y,
+      hint: 'The click most likely missed the field, or the field is read-only, not a text input, or inside a frame or closed shadow root this backend cannot reach. Run snapshot -i again and fill the field it reports by ref (fill @eN <text>), rather than retrying the same coordinates or a selector.',
+    },
+  );
 }
 
-function selectAllShortcut(): string {
-  return hostPlatform() === 'darwin' ? 'Meta+a' : 'Control+a';
+function browserRefSelector(ref: string): string {
+  return ref.startsWith('@') ? ref : `@${ref}`;
 }
 
 function parseRect(data: unknown): Rect | undefined {
