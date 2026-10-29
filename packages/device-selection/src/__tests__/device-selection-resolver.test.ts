@@ -183,22 +183,36 @@ const STOCK_SIMULATORS: DeviceInfo[] = [
   { ...shutDownSimulator('ipad-pro', 'iPad Pro 13-inch (M5)', '26.5'), appleOs: 'ipados' },
 ];
 
-test('boot --pick newest settles a tie between shut-down devices that otherwise fails', async () => {
+const namesPickHint = (error: unknown) =>
+  error instanceof AppError &&
+  error.code === 'AMBIGUOUS_MATCH' &&
+  String(error.details?.hint).includes('--pick newest');
+
+test.each([
+  ['a boot without --pick', { boot: {} }, true],
+  ['any other command', {}, false],
+])('a shut-down tie fails, naming --pick newest only for %s', async (_label, intent, named) => {
   await assert.rejects(
     () =>
       resolveInventoryDeviceSelection({
         devices: STOCK_SIMULATORS,
         selector: { platform: 'ios' },
         source: 'local',
+        ...intent,
       }),
-    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.code === 'AMBIGUOUS_MATCH' &&
+      namesPickHint(error) === named,
   );
+});
 
+test('boot --pick newest settles a tie between shut-down devices that otherwise fails', async () => {
   const selection = await resolveInventoryDeviceSelection({
     devices: STOCK_SIMULATORS,
     selector: { platform: 'ios' },
     source: 'local',
-    bootPick: 'newest',
+    boot: { pick: 'newest' },
   });
 
   assert.equal(selection.device.id, 'sim-17');
@@ -214,7 +228,7 @@ test('boot --pick newest orders OS versions numerically before names', async () 
     ],
     selector: { platform: 'ios' },
     source: 'local',
-    bootPick: 'newest',
+    boot: { pick: 'newest' },
   });
 
   assert.equal(selection.device.id, 'newer');
@@ -226,25 +240,29 @@ test('boot --pick newest never overrides an already booted preferred device', as
     devices: [shutDownSimulator('newer', 'iPhone 17', '26.5'), booted],
     selector: { platform: 'ios' },
     source: 'local',
-    bootPick: 'newest',
+    boot: { pick: 'newest' },
   });
 
   assert.equal(selection.device.id, booted.id);
   assert.equal(selection.reason, 'single-booted-local');
 });
 
-test('boot --pick newest still refuses a tie between booted devices', async () => {
-  await assert.rejects(
-    () =>
-      resolveInventoryDeviceSelection({
-        devices: STOCK_SIMULATORS.map((device) => ({ ...device, booted: true })),
-        selector: { platform: 'ios' },
-        source: 'local',
-        bootPick: 'newest',
-      }),
-    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
-  );
-});
+test.each([{ pick: 'newest' as const }, {}])(
+  'a booted tie stays ambiguous and never suggests --pick (boot %j)',
+  async (boot) => {
+    await assert.rejects(
+      () =>
+        resolveInventoryDeviceSelection({
+          devices: STOCK_SIMULATORS.map((device) => ({ ...device, booted: true })),
+          selector: { platform: 'ios' },
+          source: 'local',
+          boot,
+        }),
+      (error: unknown) =>
+        error instanceof AppError && error.code === 'AMBIGUOUS_MATCH' && !namesPickHint(error),
+    );
+  },
+);
 
 test('boot --pick newest prefers a mobile AVD over a TV AVD that sorts first by name', async () => {
   const selection = await resolveInventoryDeviceSelection({
@@ -254,21 +272,25 @@ test('boot --pick newest prefers a mobile AVD over a TV AVD that sorts first by 
     ],
     selector: { platform: 'android' },
     source: 'local',
-    bootPick: 'newest',
+    boot: { pick: 'newest' },
   });
 
   assert.equal(selection.device.id, STOPPED_ANDROID_EMULATOR.id);
 });
 
-test('boot --pick newest never picks between provider devices', async () => {
-  await assert.rejects(
-    () =>
-      resolveInventoryDeviceSelection({
-        devices: STOCK_SIMULATORS,
-        selector: { platform: 'ios' },
-        source: 'provider',
-        bootPick: 'newest',
-      }),
-    (error: unknown) => error instanceof AppError && error.code === 'AMBIGUOUS_MATCH',
-  );
-});
+test.each([{ pick: 'newest' as const }, {}])(
+  'a boot never picks between provider devices nor suggests --pick (boot %j)',
+  async (boot) => {
+    await assert.rejects(
+      () =>
+        resolveInventoryDeviceSelection({
+          devices: STOCK_SIMULATORS,
+          selector: { platform: 'ios' },
+          source: 'provider',
+          boot,
+        }),
+      (error: unknown) =>
+        error instanceof AppError && error.code === 'AMBIGUOUS_MATCH' && !namesPickHint(error),
+    );
+  },
+);

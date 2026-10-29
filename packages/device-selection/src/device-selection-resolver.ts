@@ -31,9 +31,14 @@ export type InventoryDeviceSelectionParams = {
    * simulators match the selector, the one with the app installed wins.
    */
   appleSimulatorAppTarget?: string;
-  /** The `boot --pick` opt-in: settles a tie between shut-down local devices instead of refusing. */
-  bootPick?: BootPickPolicy;
+  /** Set only by `boot`, the one command that may settle a tie between shut-down local devices. */
+  boot?: BootSelectionIntent;
 };
+
+/** A boot request. `pick` is its `--pick` opt-in; without it, a shut-down tie names the opt-in. */
+export type BootSelectionIntent = { pick?: BootPickPolicy };
+
+const BOOT_PICK_HINT = 'To boot one of these shut-down devices, pass --pick newest.';
 
 export async function resolveInventoryDeviceSelection(
   params: InventoryDeviceSelectionParams,
@@ -56,23 +61,24 @@ export async function resolveInventoryDeviceSelection(
   const candidates = devices.filter((device) =>
     matchesDeviceSelector(device, selector, { includeExplicitSelectors: explicitSelector }),
   );
-  if (source === 'local' && !explicitSelector && params.bootPick === 'newest') {
-    const picked = pickNewestBootableDevice(candidates);
-    if (picked) {
-      return {
-        device: picked,
-        reason: 'newest-bootable-local',
-        source,
-        candidateCount: candidates.length,
-        bootOccurred: false,
-      };
-    }
+  const bootPickable =
+    params.boot && source === 'local' && !explicitSelector
+      ? pickNewestBootableDevice(candidates)
+      : undefined;
+  if (bootPickable && params.boot?.pick === 'newest') {
+    return {
+      device: bootPickable,
+      reason: 'newest-bootable-local',
+      source,
+      candidateCount: candidates.length,
+      bootOccurred: false,
+    };
   }
   try {
     const device = await resolveDevice([...devices], selector);
     return describeSelection(device, candidates, { explicitSelector, source });
   } catch (error) {
-    throw withDeviceRetrySelectors(error, candidates);
+    throw withDeviceRetrySelectors(error, candidates, bootPickable ? BOOT_PICK_HINT : undefined);
   }
 }
 
@@ -225,7 +231,11 @@ async function resolveAppInstalledSimulatorSelection(
   );
 }
 
-function withDeviceRetrySelectors(error: unknown, candidates: readonly DeviceInfo[]): unknown {
+function withDeviceRetrySelectors(
+  error: unknown,
+  candidates: readonly DeviceInfo[],
+  extraHint?: string,
+): unknown {
   if (!(error instanceof AppError) || error.code !== 'AMBIGUOUS_MATCH') return error;
   return new AppError(
     error.code,
@@ -234,6 +244,7 @@ function withDeviceRetrySelectors(error: unknown, candidates: readonly DeviceInf
       ...(error.details ?? {}),
       ...deviceCandidateDetails(candidates),
       retrySelectors: retrySelectorsFor(candidates),
+      ...(extraHint ? { hint: [error.details?.hint, extraHint].filter(Boolean).join(' ') } : {}),
     },
     error,
   );

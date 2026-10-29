@@ -498,13 +498,13 @@ test.each([
 ] as const)(
   'boot --pick reaches %s inventory selection and nothing else picks',
   async (platform, first, second) => {
-    const resolve = async (bootPick?: 'newest') =>
+    const resolve = async (pick?: 'newest') =>
       await withTestDeviceInventory(
         { local: async () => [physical, first, second] },
         async () =>
           await resolveTargetDeviceSelectionInContext(
             { platform },
-            { env: process.env, androidAvdSelection: 'include-stopped', bootPick },
+            { env: process.env, androidAvdSelection: 'include-stopped', boot: { pick } },
           ),
       );
 

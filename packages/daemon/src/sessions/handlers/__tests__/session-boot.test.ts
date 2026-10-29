@@ -151,7 +151,7 @@ test('boot --pick reaches selection and reports the picked device it started', a
   expect(response?.ok, JSON.stringify(response)).toBe(true);
   expect(mockSelection.mock.calls.at(-1)?.[1]).toMatchObject({
     androidAvdSelection: 'include-stopped',
-    bootPick: 'newest',
+    boot: { pick: 'newest' },
   });
   if (!response?.ok) return;
   expect(response.data).toMatchObject({
@@ -165,41 +165,6 @@ test('boot --pick reaches selection and reports the picked device it started', a
     },
   });
 });
-
-test.each([
-  [{ platform: 'ios' as const }, true],
-  [{ platform: 'ios' as const, pick: 'newest' as const }, false],
-])(
-  'an ambiguous boot names --pick newest only when it was not passed (%j)',
-  async (flags, named) => {
-    vi.mocked(resolveTargetDeviceSelection).mockRejectedValueOnce(
-      new AppError(
-        'AMBIGUOUS_MATCH',
-        '2 devices match this request equally; select one explicitly.',
-        {
-          hint: 'Select the intended device explicitly.',
-        },
-      ),
-    );
-
-    const outcome = await handleSessionCommands({
-      host: createTestHostEnvironment(),
-      createCommandSurface: fakeCreateCommandSurface,
-      platformServices: daemonPlatformServicesFixture(),
-      req: { token: 't', session: 'default', command: 'boot', positionals: [], flags },
-      sessionName: 'default',
-      logPath: path.join(mkdtempForTestSync('daemon'), 'daemon.log'),
-      sessionStore: makeSessionStore(),
-      invoke: noopInvoke,
-    }).catch((error: unknown) => error);
-
-    expect(outcome).toBeInstanceOf(AppError);
-    const { code, details } = outcome as AppError;
-    expect(code).toBe('AMBIGUOUS_MATCH');
-    expect(details?.hint?.startsWith('Select the intended device explicitly.')).toBe(true);
-    expect(details?.hint?.includes('--pick newest')).toBe(named);
-  },
-);
 
 test('boot --timeout forwards a startup deadline to bootTarget (#3004)', async () => {
   const sessionStore = makeSessionStore();

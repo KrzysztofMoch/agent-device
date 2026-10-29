@@ -61,8 +61,14 @@ export const DEVICE_MANAGEMENT_COMMAND_OUTPUT_SCHEMAS = {
     {
       ...deviceHeaderProperties,
       booted: { type: 'boolean', const: true },
-      selection: looseObjectSchema(
-        'How the device was chosen: reason, source, candidateCount, bootOccurred.',
+      selection: objectSchema(
+        {
+          reason: stringSchema('Why this device was chosen, such as newest-bootable-local.'),
+          source: stringSchema('Where it came from: session, local, or provider.'),
+          candidateCount: numberSchema(),
+          bootOccurred: booleanSchema(),
+        },
+        ['reason', 'source', 'candidateCount', 'bootOccurred'],
       ),
     },
     [...deviceHeaderRequired, 'booted'],

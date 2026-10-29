@@ -90,7 +90,7 @@ export async function resolvePowerCommandDevice(
 
 /**
  * Boot's device with its selection evidence. Boot alone reads the `--pick` opt-in; shutdown shares
- * the stopped-AVD scope above and keeps refusing a tie. A tie refused without the opt-in names it.
+ * the stopped-AVD scope above and keeps refusing a tie.
  */
 export async function resolveBootCommandSelection(
   params: PowerCommandDeviceParams,
@@ -98,23 +98,12 @@ export async function resolveBootCommandSelection(
   if (params.session && !hasExplicitDeviceSelector(params.flags)) {
     return resolveExistingSessionDeviceSelection(await resolvePowerCommandDevice(params));
   }
-  try {
-    return await resolveTargetDeviceSelection(params.flags ?? {}, {
-      env: params.env,
-      androidAvdSelection: 'include-stopped',
-      bootPick: params.flags?.pick,
-    });
-  } catch (error) {
-    if (params.flags?.pick || !(error instanceof AppError) || error.code !== 'AMBIGUOUS_MATCH') {
-      throw error;
-    }
-    const hint = [error.details?.hint, BOOT_PICK_HINT].filter(Boolean).join(' ');
-    throw new AppError(error.code, error.message, { ...error.details, hint }, error);
-  }
+  return await resolveTargetDeviceSelection(params.flags ?? {}, {
+    env: params.env,
+    androidAvdSelection: 'include-stopped',
+    boot: { pick: params.flags?.pick },
+  });
 }
-
-// Conditional: a tie between booted devices stays ambiguous even with the opt-in.
-const BOOT_PICK_HINT = 'If they are all shut down, boot --pick newest boots one of them.';
 
 export async function refreshSessionDeviceIfNeeded(
   device: DeviceInfo,

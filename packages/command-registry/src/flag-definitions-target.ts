@@ -123,7 +123,7 @@ export const TARGET_FLAG_DEFINITIONS: readonly FlagDefinition[] = [
     enumValues: BOOT_PICK_POLICIES,
     usageLabel: `--pick ${BOOT_PICK_POLICIES.join('|')}`,
     usageDescription:
-      'Boot: when several shut-down devices match equally, boot the one with the newest OS (else first by name) instead of failing',
+      'Boot: when several equally preferred matches are all shut down, boot one (mobile over TV, newest OS, then name) instead of failing; booted ties still fail',
     projectConfig: false,
     recorded: false,
   },
