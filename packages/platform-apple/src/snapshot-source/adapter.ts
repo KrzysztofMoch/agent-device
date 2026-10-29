@@ -8,7 +8,7 @@ import { createSnapshotSourceDeadline, remainingSnapshotSourceMs } from './deadl
 import { AcceptedDepthHints, type DepthHintDecision } from './depth-hints.ts';
 import { asSnapshotSourceError, snapshotSourceError } from './errors.ts';
 import { SnapshotBridgeManager } from './lifecycle.ts';
-import { resolveSnapshotSourceLimits } from './limits.ts';
+import { MAXIMUM_REQUEST_LEVELS, resolveSnapshotSourceLimits } from './limits.ts';
 import { readSnapshotBridgeRecovery, type SnapshotBridgeEnvelope } from './protocol.ts';
 import { createSnapshotBridgePreparation } from './preparation.ts';
 import { decodeSnapshotBridgeTree } from './tree.ts';
@@ -57,7 +57,8 @@ export function createSimulatorSnapshotSource(
       const limits = resolveSnapshotSourceLimits({ ...options.limits, ...request.limits });
       const deadline = createSnapshotSourceDeadline(limits.maxDurationMs, request.signal);
       const maxDepth = resolveRequestedDepth(request.hint, limits.maxTraversalDepth);
-      const requestedLevels = maxDepth + 1;
+      // Hints compare against the guest's first request, which never asks for more than one window.
+      const requestedLevels = Math.min(maxDepth + 1, MAXIMUM_REQUEST_LEVELS);
       const explicitDepth = request.hint.rawTraversalDepth !== null;
       return await host.withDiagnosticTimer(
         'ios.snapshot-source.acquire',

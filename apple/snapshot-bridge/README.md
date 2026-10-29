@@ -80,9 +80,11 @@ A healthy capture uses one native request. If native acquisition rejects it,
 and fetches withheld children from their accessibility elements. The completed
 tree keeps the original depth and node limits; partial trees disclose truncation.
 The traversal depth counts edges below the root; native requests count the root
-as one level. Each acquisition allows two lower-depth retries, and recovery
-allows at most 32 native requests within the existing capture deadline,
-checks foreground ownership on every request, and returns a failure when it
+as one level. One native request reads at most 65 levels, because the AX
+server rejects deeper requests on deep trees; deeper levels, up to the 128-level
+bound, arrive through continuations. Each acquisition allows two lower-depth
+retries, and recovery allows at most 64 native requests within the existing
+capture deadline, checks foreground ownership on every request, and returns a failure when it
 cannot complete a continuation. Budget exhaustion and malformed continuations
 use non-launch failure codes, so the route falls back without launch re-polling.
 At each native fragment boundary, an absent or invalid child count means unknown
