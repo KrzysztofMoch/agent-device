@@ -9,6 +9,7 @@ import type {
   CaptureSnapshotResult,
   SessionCloseResult,
 } from '@agent-device/contracts/client';
+import type { CloudArtifactsResult } from '@agent-device/contracts/observability';
 import { publicSnapshotCaptureAnnotations } from '@agent-device/contracts/capture';
 import { isSerialAddressablePlatform } from '@agent-device/kernel/device';
 import { successText, withSuccessText } from '@agent-device/kernel/success-text';
@@ -174,6 +175,26 @@ export function serializeCloseResult(
     session: result.session,
     ...(result.shutdown ? { shutdown: result.shutdown } : {}),
     ...('provider' in result && result.provider ? { provider: result.provider } : {}),
-    ...successText(result.session ? `Closed: ${result.session}` : 'Closed'),
+    ...successText(
+      [
+        result.session ? `Closed: ${result.session}` : 'Closed',
+        ...formatDeliveredArtifactLines(
+          'provider' in result ? result.provider?.cloudArtifacts : undefined,
+        ),
+      ].join('\n'),
+    ),
   };
+}
+
+/** The ready provider artifacts a released session left behind, and the provider's note on them. */
+export function formatDeliveredArtifactLines(
+  cloudArtifacts: CloudArtifactsResult | undefined,
+): string[] {
+  return [
+    ...(cloudArtifacts?.cloudArtifacts ?? [])
+      .filter((artifact) => (artifact.availability ?? 'ready') === 'ready' && artifact.url)
+      .slice(0, 3)
+      .map((artifact) => `${artifact.name}: ${artifact.url}`),
+    ...(cloudArtifacts?.message ? [cloudArtifacts.message] : []),
+  ];
 }

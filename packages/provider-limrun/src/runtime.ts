@@ -51,6 +51,17 @@ import { resolveLimrunRuntimeInstance } from './runtime-instance.ts';
 import type { LimrunRequestOperationDrain } from './request-cancellation.ts';
 import type { LimrunAppAsset } from './app-catalog.ts';
 import type { LimrunInstanceAccess } from './instance-access.ts';
+import type {
+  CloudArtifactProvider,
+  CloudArtifactsQuery,
+  CloudArtifactsResult,
+} from '@agent-device/contracts/observability';
+import type {
+  LimrunHarCapture,
+  LimrunHarCaptureFailure,
+  LimrunTunnelFailureReport,
+} from './network-har.ts';
+import path from 'node:path';
 
 type LimrunRuntimeSession = LimrunIosSession | LimrunAndroidSession;
 
@@ -64,6 +75,11 @@ export type LimrunRuntimeOptions = {
   keepAlive?: boolean;
   runtimeInstance?: string;
   instances?: LimrunInstanceAccess;
+  /**
+   * Where `--provider-network-logs` writes each session's live HAR file. The composition root
+   * resolves it under the daemon state dir; without it the opt-in reports a typed refusal.
+   */
+  networkHarDir?: string;
 };
 
 export type LimrunRuntime = ProviderDeviceRuntime & {
@@ -108,6 +124,8 @@ class LimrunRuntimeImplementation implements ProviderDeviceRuntime {
   private readonly limrun: Limrun | undefined;
   private readonly sessions = new Map<string, LimrunRuntimeSession>();
   private readonly keepAliveTimers = new Map<string, NodeJS.Timeout>();
+  /** Each lease's `--provider-network-logs` capture: live, stopped at release, or never started. */
+  private readonly networkCaptures = new Map<string, NetworkCaptureState>();
   private readonly appAliases = new Map<
     string,
     Readonly<{ assetName: string; installedAppId: string }>
@@ -256,14 +274,36 @@ class LimrunRuntimeImplementation implements ProviderDeviceRuntime {
     // ahead of attach as well as create, since an attached instance reads none of them either.
     rejectRefusedLimrunProfileFields(context);
     const existing = this.sessions.get(lease.leaseId);
-    if (existing) return { limrunInstanceId: existing.instanceId, device: existing.device };
+    if (existing) {
+      // A repeat allocation can opt into the capture the first one did not ask for, or retry one
+      // that could not start.
+      const networkHar =
+        context?.flags?.providerNetworkLogs === true &&
+        (this.networkCaptures.get(lease.leaseId)?.phase ?? 'unavailable') === 'unavailable'
+          ? await this.startNetworkCapture(lease, existing, context)
+          : undefined;
+      return {
+        limrunInstanceId: existing.instanceId,
+        device: existing.device,
+        ...(networkHar ? { networkHar } : {}),
+      };
+    }
 
     const session =
       (await this.attachSession(platform, lease)) ??
       (await this.createSession(platform, lease, context));
     this.sessions.set(lease.leaseId, session);
     if (this.options.keepAlive) this.startKeepAlive(lease.leaseId, session);
-    return { limrunInstanceId: session.instanceId, device: session.device };
+    const networkHar =
+      context?.flags?.providerNetworkLogs === true
+        ? await this.startNetworkCapture(lease, session, context)
+        : undefined;
+    return {
+      limrunInstanceId: session.instanceId,
+      providerSessionId: session.instanceId,
+      device: session.device,
+      ...(networkHar ? { networkHar } : {}),
+    };
   }
 
   private async attachSession(
@@ -350,11 +390,102 @@ class LimrunRuntimeImplementation implements ProviderDeviceRuntime {
   private async release(lease: DeviceLease): Promise<Record<string, unknown> | undefined> {
     const session = this.sessions.get(lease.leaseId);
     if (!session) return await this.releaseRecoveredSession(lease);
+    // A retry after a failed termination finds the capture already stopped and reports it again.
+    const networkCapture = await this.stopNetworkCapture(lease.leaseId);
     await this.terminateSession(session);
     this.sessions.delete(lease.leaseId);
     this.appAliases.delete(lease.leaseId);
-    return { limrunInstanceId: session.instanceId };
+    return {
+      limrunInstanceId: session.instanceId,
+      providerSessionId: session.instanceId,
+      ...(networkCapture ? { cloudArtifacts: networkCaptureArtifacts(networkCapture) } : {}),
+    };
   }
+
+  /**
+   * `--provider-network-logs`: opens the instance's one destination tunnel with inspection and
+   * keeps a live HAR file under the state dir. The Metro/companion route rides this tunnel.
+   */
+  private async startNetworkCapture(
+    lease: DeviceLease,
+    session: LimrunRuntimeSession,
+    context?: LeaseLifecycleContext,
+  ): Promise<Record<string, unknown>> {
+    const instanceId = session.instanceId;
+    const harDir = this.options.networkHarDir;
+    const result = harDir
+      ? await import('./network-har.ts').then(({ startLimrunHarCapture }) =>
+          startLimrunHarCapture(session.client, {
+            // One file per lease: an attached instance serves many sessions.
+            harPath: path.join(harDir, `${instanceId}-${fileSafe(lease.leaseId)}.har`),
+            selectors: readProviderNetworkHosts(context?.flags?.providerNetworkHosts),
+          }),
+        )
+      : ({
+          ok: false,
+          reason: 'capture-dir-unset',
+          message: 'The runtime has no directory for network capture files.',
+        } as const);
+    await this.forgetStoppedNetworkCaptures();
+    if (!result.ok) {
+      const { reason, message } = result;
+      this.networkCaptures.set(lease.leaseId, {
+        phase: 'unavailable',
+        instanceId,
+        reason,
+        message,
+      });
+      return { status: 'unavailable', reason, message };
+    }
+    this.networkCaptures.set(lease.leaseId, {
+      phase: 'capturing',
+      instanceId,
+      capture: result.capture,
+    });
+    return { status: 'capturing', harPath: result.capture.harPath };
+  }
+
+  private async stopNetworkCapture(leaseId: string): Promise<SettledNetworkCapture | undefined> {
+    const state = this.networkCaptures.get(leaseId);
+    if (state?.phase !== 'capturing') return state;
+    // Read the tunnel's last dial failure while the tunnel is still open.
+    const failures = await state.capture.failures();
+    await state.capture.close();
+    const stopped = {
+      phase: 'stopped',
+      instanceId: state.instanceId,
+      harPath: state.capture.harPath,
+      failures,
+    } as const;
+    this.networkCaptures.set(leaseId, stopped);
+    return stopped;
+  }
+
+  /** Keeps released captures listable for a while without growing for the daemon's lifetime. */
+  private async forgetStoppedNetworkCaptures(): Promise<void> {
+    const settled = [...this.networkCaptures].filter(([, state]) => state.phase !== 'capturing');
+    const { discardLimrunHar } = await import('./network-har.ts');
+    for (const [leaseId, state] of settled.slice(0, -SETTLED_NETWORK_CAPTURE_LIMIT)) {
+      this.networkCaptures.delete(leaseId);
+      // The file holds raw traffic, so it lives exactly as long as the record that reports it.
+      if (state.phase === 'stopped') await discardLimrunHar(state.harPath).catch(() => undefined);
+    }
+  }
+
+  readonly cloudArtifacts: CloudArtifactProvider = {
+    listCloudArtifacts: async (
+      query: CloudArtifactsQuery,
+    ): Promise<CloudArtifactsResult | undefined> => {
+      const state = query.leaseId ? this.networkCaptures.get(query.leaseId) : undefined;
+      if (state?.phase !== 'capturing') return state ? networkCaptureArtifacts(state) : undefined;
+      return networkCaptureArtifacts({
+        phase: 'stopped',
+        instanceId: state.instanceId,
+        harPath: state.capture.harPath,
+        failures: await state.capture.failures(),
+      });
+    },
+  };
 
   private async releaseRecoveredSession(
     lease: DeviceLease,
@@ -395,6 +526,13 @@ class LimrunRuntimeImplementation implements ProviderDeviceRuntime {
     const leaseId = session.lease.leaseId;
     clearInterval(this.keepAliveTimers.get(leaseId));
     this.keepAliveTimers.delete(leaseId);
+    // A capture rides the instance's one tunnel; close it before the client disconnects.
+    const networkCapture = this.networkCaptures.get(leaseId);
+    if (networkCapture?.phase === 'capturing') {
+      this.networkCaptures.delete(leaseId);
+      // The client disconnect below ends the tunnel even when its own close fails.
+      await networkCapture.capture.close().catch(() => undefined);
+    }
     session.client.disconnect();
     if (session.platform === 'android') await cleanupLimrunAndroidAdbTunnel(session);
     if (session.ownership === 'attached') return;
@@ -544,4 +682,95 @@ function portReverseResult(options: ProviderPortReverseOptions): Record<string, 
 
 function unsupported(command: string, message: string): never {
   throw new AppError('UNSUPPORTED_OPERATION', message, { command });
+}
+
+function fileSafe(value: string): string {
+  return value.replaceAll(/[^\w.-]/g, '_');
+}
+
+/** The `--provider-network-hosts` comma list, or undefined to keep the default selectors. */
+function readProviderNetworkHosts(value: unknown): readonly string[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const hosts = value
+    .split(',')
+    .map((host) => host.trim())
+    .filter((host) => host.length > 0);
+  return hosts.length > 0 ? hosts : undefined;
+}
+
+const SETTLED_NETWORK_CAPTURE_LIMIT = 32;
+
+type SettledNetworkCapture =
+  | Readonly<{
+      phase: 'stopped';
+      instanceId: string;
+      harPath: string;
+      failures: LimrunTunnelFailureReport;
+    }>
+  | Readonly<{ phase: 'unavailable'; instanceId: string } & LimrunHarCaptureFailure>;
+
+type NetworkCaptureState =
+  | SettledNetworkCapture
+  | Readonly<{ phase: 'capturing'; instanceId: string; capture: LimrunHarCapture }>;
+
+const NETWORK_ARTIFACT_NAME = 'Network traffic (HAR, live file on the daemon host)';
+
+/**
+ * One HAR file, stated as a provider artifact whose `url` is its path on this host. The tunnel
+ * failure report rides the artifact's metadata, and its summary is the result's message. A capture
+ * that never started is an unavailable artifact carrying the typed reason.
+ */
+function networkCaptureArtifacts(capture: SettledNetworkCapture): CloudArtifactsResult {
+  if (capture.phase === 'unavailable') {
+    return {
+      provider: LIMRUN_PROVIDER,
+      status: 'unavailable',
+      providerSessionId: capture.instanceId,
+      message: `Network capture did not start (${capture.reason}): ${capture.message}`,
+      cloudArtifacts: [
+        {
+          provider: LIMRUN_PROVIDER,
+          kind: 'network',
+          name: NETWORK_ARTIFACT_NAME,
+          availability: 'unavailable',
+          metadata: { reason: capture.reason },
+        },
+      ],
+    };
+  }
+  const { harPath, instanceId, failures } = capture;
+  return {
+    provider: LIMRUN_PROVIDER,
+    status: 'ready',
+    providerSessionId: instanceId,
+    ...(failures.total > 0 || failures.lastDialFailure
+      ? { message: summarizeTunnelFailures(failures) }
+      : {}),
+    cloudArtifacts: [
+      {
+        provider: LIMRUN_PROVIDER,
+        kind: 'network',
+        name: NETWORK_ARTIFACT_NAME,
+        url: harPath,
+        extension: 'har',
+        contentType: 'application/json',
+        availability: 'ready',
+        metadata: { tunnelFailures: failures },
+      },
+    ],
+  };
+}
+
+function summarizeTunnelFailures(failures: LimrunTunnelFailureReport): string {
+  const kinds = Object.entries(failures.byKind).map(([kind, entry]) => {
+    const failure = entry.latest.at(-1);
+    const endpoint = failure?.host
+      ? ` ${failure.host}${failure.port ? `:${failure.port}` : ''}`
+      : '';
+    return `${kind} ${entry.count}, latest${endpoint} (${failure?.message})`;
+  });
+  const dial = failures.lastDialFailure
+    ? [`last dial failure ${failures.lastDialFailure.reason}`]
+    : [];
+  return `Network capture failures: ${failures.total}; ${[...kinds, ...dial].join('; ')}`;
 }

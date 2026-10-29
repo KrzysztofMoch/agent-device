@@ -304,6 +304,26 @@ export const CONNECTION_FLAG_DEFINITIONS: readonly FlagDefinition[] = [
     recorded: false,
   },
   {
+    key: 'providerNetworkLogs',
+    names: ['--provider-network-logs'],
+    type: 'boolean',
+    usageLabel: '--provider-network-logs',
+    usageDescription:
+      'Limrun: capture session network traffic into a live HAR file on the daemon host; artifacts and close print its path and any tunnel failures. Pass --provider-network-hosts with your app API hosts. Captured traffic exits through the daemon host, the HAR holds raw headers and bodies, certificate-pinned hosts fail, and DNS-over-HTTPS bypasses the capture',
+    projectConfig: false,
+    recorded: false,
+  },
+  {
+    key: 'providerNetworkHosts',
+    names: ['--provider-network-hosts'],
+    type: 'string',
+    usageLabel: '--provider-network-hosts <list>',
+    usageDescription:
+      'With --provider-network-logs: comma-separated hosts to capture, such as your app API hosts (exact hosts, wildcards like *.example.com, or localhost:<port> routes). Replaces the noisy default of common public domains plus localhost:8081',
+    projectConfig: false,
+    recorded: false,
+  },
+  {
     key: 'awsProjectArn',
     names: ['--aws-project-arn'],
     type: 'string',
