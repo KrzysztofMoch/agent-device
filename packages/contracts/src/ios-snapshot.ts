@@ -124,6 +124,15 @@ export type IosHittabilityEvidence =
 
 export type IosProviderPrunedField = 'nodes' | 'depth' | 'scope' | 'interactive-only';
 
+/**
+ * Why a provider left a collapsed tab bar unexpanded:
+ * - `rejected`: a hit-test across the bar failed.
+ * - `timed-out`: a hit-test across the bar did not answer in time.
+ * - `budget-exhausted`: the hit-test budget ran out before a candidate with a tab bar's height
+ *   was checked.
+ */
+export type IosCollapsedTabBarProbeFailure = 'rejected' | 'timed-out' | 'budget-exhausted';
+
 export type IosAcquisitionResidue =
   | Readonly<{
       kind: 'provider-pruned';
@@ -152,6 +161,10 @@ export type IosAcquisitionResidue =
   | Readonly<{
       kind: 'fallback-source';
       producer: IosSnapshotProducer;
+    }>
+  | Readonly<{
+      kind: 'collapsed-tab-bar-probe-failed';
+      reason: IosCollapsedTabBarProbeFailure;
     }>;
 
 type IosSnapshotAcquisitionForIntent<Intent extends IosAcquisitionIntent> = Readonly<{

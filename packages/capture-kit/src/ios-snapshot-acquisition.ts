@@ -1,6 +1,7 @@
 import type { SnapshotRuntimeAcquiredResult } from '@agent-device/contracts/interactor-types';
 import type {
   IosAcquisitionResidue,
+  IosCollapsedTabBarProbeFailure,
   IosProviderAcquisitionCapabilities,
   IosProviderAcquisitionProducer,
   IosSnapshotEvidenceAvailability,
@@ -75,6 +76,7 @@ export function iosSnapshotTruncationEvidence(
 function deriveIosSnapshotAcquisitionResidue(
   producer: IosProviderAcquisitionCapabilities,
   viewport: IosViewportEvidence,
+  collapsedTabBarProbeFailure: IosCollapsedTabBarProbeFailure | undefined,
 ): readonly IosAcquisitionResidue[] {
   const residue: IosAcquisitionResidue[] = [];
   if (producer.hittabilityEvidence === 'unavailable') {
@@ -92,6 +94,9 @@ function deriveIosSnapshotAcquisitionResidue(
   if (viewport.kind === 'missing') {
     residue.push({ kind: 'missing-viewport', reason: viewport.reason });
   }
+  if (collapsedTabBarProbeFailure) {
+    residue.push({ kind: 'collapsed-tab-bar-probe-failed', reason: collapsedTabBarProbeFailure });
+  }
   return Object.freeze(residue);
 }
 
@@ -102,6 +107,11 @@ export function createIosSnapshotAcquisition(
     viewport: IosViewportEvidence;
     keyboard?: SnapshotKeyboardBandFact;
     lineage: IosSnapshotLineage;
+    /**
+     * Set when the provider left a collapsed tab bar unexpanded: a hit-test was rejected or timed
+     * out, or the hit-test budget ran out before a candidate with a tab bar's height was checked.
+     */
+    collapsedTabBarProbeFailure?: IosCollapsedTabBarProbeFailure;
   }>,
 ): SnapshotRuntimeAcquiredResult {
   const producer = IOS_PROVIDER_ACQUISITION_CAPABILITY_VALUES[input.producer];
@@ -114,7 +124,11 @@ export function createIosSnapshotAcquisition(
       viewport: input.viewport,
       ...(input.keyboard ? { keyboard: input.keyboard } : {}),
       lineage: input.lineage,
-      residue: deriveIosSnapshotAcquisitionResidue(producer, input.viewport),
+      residue: deriveIosSnapshotAcquisitionResidue(
+        producer,
+        input.viewport,
+        input.collapsedTabBarProbeFailure,
+      ),
     },
   };
 }
