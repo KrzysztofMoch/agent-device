@@ -322,10 +322,12 @@ test('the Simulator AX source forgets a hint once a default-depth probe-back is 
     }
     assert.equal((await source.acquire({ target, hint })).stage, 'acquired');
     assert.deepEqual(
-      fixture.diagnostics.slice(-2).map((event) => [event.hint, event.learning]),
+      fixture.diagnostics
+        .slice(-2)
+        .map((event) => [event.requestedLevels, event.hint, event.learning]),
       [
-        ['probe-back', 'forgotten'],
-        ['no-hint', 'ignored'],
+        [129, 'probe-back', 'forgotten'],
+        [129, 'no-hint', 'ignored'],
       ],
     );
   } finally {

@@ -4,9 +4,11 @@ static NSString *const attributesKey = @"UIAccessibilitySnapshotKeyAttributes";
 static NSString *const childrenKey = @"UIAccessibilitySnapshotKeyChildren";
 static NSString *const childCountKey = @"UIAccessibilitySnapshotKeyChildrenCount";
 static NSString *const elementKey = @"UIAccessibilitySnapshotKeyElement";
-// One request reads at most this many levels; deeper levels arrive through continuations. On deep
-// trees the AX server rejects a single request past about 62 levels, so a deeper first request
-// would only add a rejected round trip and shorten the halving ladder.
+// One request reads at most this many levels, the window the former 64-level default used, so trees
+// up to 65 levels keep their request sequence; deeper levels arrive through continuations. On deep
+// trees the AX server rejects a request that would return more than about 62 levels (measured on
+// iOS 26.5), so there the first request is rejected once and the halving ladder settles at 32,
+// which the host then sends as a depth hint.
 static const NSUInteger maximumRequestLevels = 65;
 // Sized for the daemon's default depth bound (128 levels). Each root-to-leaf path needs one
 // continuation per accepted-depth window, so the budget scales with the depth it must cover.
