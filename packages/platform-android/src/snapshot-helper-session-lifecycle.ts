@@ -7,6 +7,10 @@
  * `snapshot-helper-session.ts`; they acquire through here and never reach the registry themselves.
  */
 import type { AndroidAdbProcess } from './adb-executor.ts';
+import {
+  recordInstrumentationProcess,
+  type AndroidInstrumentationProcessRecord,
+} from './instrumentation-helper.ts';
 import { runtimeSlot } from '@agent-device/host-kit/runtime-slots';
 import { requireAndroidAdbHost } from './adb-host.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
@@ -84,6 +88,8 @@ export type AndroidSnapshotHelperSession = {
   port: number;
   adb: AndroidAdbExecutor;
   process: AndroidAdbProcess;
+  /** What the helper process printed and how it ended, for a session that dies on its own. */
+  processRecord: AndroidInstrumentationProcessRecord;
   startedAtMs: number;
   capturedCount: number;
   commands: ReadonlySet<string>;
@@ -212,6 +218,7 @@ async function tryStartAndroidSnapshotHelperSession(params: {
       data: {
         deviceKey: params.deviceKey,
         reason: error instanceof AppError ? error.details?.reason : undefined,
+        instrumentation: error instanceof AppError ? error.details?.instrumentation : undefined,
         detail: error instanceof Error ? error.message : String(error),
       },
     });
@@ -303,6 +310,7 @@ async function startAndroidSnapshotHelperSession(params: {
     allowFailure: true,
     captureOutput: false,
   });
+  const processRecord = recordInstrumentationProcess(childProcess);
   const session: AndroidSnapshotHelperSession = {
     identity: params.identity,
     deviceKey: params.deviceKey,
@@ -316,6 +324,7 @@ async function startAndroidSnapshotHelperSession(params: {
     port,
     adb: params.options.adb,
     process: childProcess,
+    processRecord,
     startedAtMs: Date.now(),
     capturedCount: 0,
     commands: new Set(),
@@ -329,6 +338,7 @@ async function startAndroidSnapshotHelperSession(params: {
       childProcess,
       params.startBudgetMs,
       params.options.signal,
+      processRecord,
     );
     sessions().set(params.deviceKey, session);
     failedSessions().delete(params.identity);
@@ -463,6 +473,7 @@ export async function stopAndroidSnapshotHelperSession(
   const session = sessions().get(deviceKey);
   if (!session) return false;
   sessions().delete(deviceKey);
+  await reportSessionExitedOnItsOwn(deviceKey, session);
   const processExit = observeAndroidSnapshotHelperProcessExit(session.process);
   const force = options.force === true || options.signal?.aborted === true;
   const graceful = await requestGracefulSessionExit(session, processExit, force, options.signal);
@@ -531,6 +542,32 @@ export async function stopAndroidSnapshotHelperSession(
     },
   });
   return true;
+}
+
+/**
+ * Records the exit result of a session whose helper process ended before this stop. Read before
+ * teardown, so a process this stop ends has no cause of its own to report; a process that exited may
+ * still be flushing its last output, so its streams get a short drain. A running process costs
+ * nothing here.
+ */
+async function reportSessionExitedOnItsOwn(
+  deviceKey: string,
+  session: AndroidSnapshotHelperSession,
+): Promise<void> {
+  if (!hasAndroidSnapshotHelperProcessEnded(session.process)) return;
+  await waitForAndroidSnapshotHelperProcessExit(
+    session.processRecord.closed,
+    ANDROID_SNAPSHOT_HELPER_HOST_PROCESS_EXIT_GRACE_MS,
+  );
+  emitDiagnostic({
+    level: 'warn',
+    phase: 'android_snapshot_helper_session_exited',
+    data: {
+      deviceKey,
+      capturedCount: session.capturedCount,
+      instrumentation: session.processRecord.exitResult() ?? session.processRecord.current(),
+    },
+  });
 }
 
 async function requestGracefulSessionExit(

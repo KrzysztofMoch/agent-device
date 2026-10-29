@@ -11,6 +11,7 @@ import {
   readInstrumentationResultBoolean,
   readInstrumentationResultIntegerList,
   readInstrumentationResultNumber,
+  readInstrumentationExitResult,
 } from './instrumentation-helper.ts';
 import {
   ANDROID_SNAPSHOT_HELPER_CAPTURE_TIMEOUT_MS,
@@ -86,7 +87,7 @@ export async function captureAndroidSnapshotWithHelper(
       },
     );
   } catch (error) {
-    if (!options.signal?.aborted) throw error;
+    if (!options.signal?.aborted) throw withoutRawStreams(error);
     await retireCanceledAndroidSnapshotHelperCommand({
       deviceKey,
       packageName: resolved.packageName,
@@ -94,7 +95,7 @@ export async function captureAndroidSnapshotWithHelper(
       cause: error,
     });
     options.signal.throwIfAborted();
-    throw error;
+    throw withoutRawStreams(error);
   }
   if (options.signal?.aborted) {
     await retireCanceledAndroidSnapshotHelperCommand({
@@ -107,13 +108,40 @@ export async function captureAndroidSnapshotWithHelper(
   }
   const output = readAndroidSnapshotHelperOutput(result);
   if (result.exitCode !== 0) {
+    const instrumentation = readInstrumentationExitResult(result);
     throw new AppError(
       'COMMAND_FAILED',
       'Android snapshot helper failed',
-      execFailureDetails(result, { helper: output.metadata }),
+      execFailureDetails(
+        { stdout: '', stderr: result.stderr, exitCode: result.exitCode },
+        { helper: output.metadata, instrumentation },
+      ),
     );
   }
   return output;
+}
+
+/**
+ * An executor failure (a deadline, a spawn error) carries the helper's raw stdout, which can hold the
+ * snapshot it was printing. It is replaced by the parsed instrumentation result; `stderr` and the
+ * typed failure metadata stay.
+ */
+function withoutRawStreams(error: unknown): unknown {
+  if (!(error instanceof AppError) || error.details?.stdout === undefined) return error;
+  const { stdout, ...details } = error.details;
+  return new AppError(
+    error.code,
+    error.message,
+    {
+      ...details,
+      instrumentation: readInstrumentationExitResult({
+        stdout: typeof stdout === 'string' ? stdout : '',
+        stderr: typeof details.stderr === 'string' ? details.stderr : '',
+        exitCode: typeof details.exitCode === 'number' ? details.exitCode : null,
+      }),
+    },
+    error.cause,
+  );
 }
 
 /**
@@ -216,21 +244,30 @@ function readAndroidSnapshotHelperOutput(
     // The helper can report structured ok=false details even when am exits non-zero.
     return parseAndroidSnapshotHelperOutput(`${result.stdout}\n${result.stderr}`);
   } catch (error) {
-    const helperFailure = error instanceof AppError && error.details?.helper ? error : undefined;
     // `am instrument` exits 0 after a helper that reported its own failure, so that report is the
-    // answer.
-    if (helperFailure) throw helperFailure;
+    // answer: its message, metadata and typed reason stay, and the instrumentation result is added.
+    if (error instanceof AppError && error.details?.helper) {
+      throw new AppError(
+        error.code,
+        error.message,
+        { ...error.details, instrumentation: readInstrumentationExitResult(result) },
+        error.cause,
+      );
+    }
     // exec-guard-allow: reachable at exit 0 (helper output unparseable); the
     // message already branches on the exit code.
+    // Stdout is not copied into the details: it can hold the snapshot the helper was printing.
+    // The new `instrumentation` detail is parsed fields only; `stderr` stays as it always was.
+    const instrumentation = readInstrumentationExitResult(result);
     throw new AppError(
       'COMMAND_FAILED',
       result.exitCode === 0
         ? 'Android snapshot helper output could not be parsed'
         : 'Android snapshot helper failed before returning parseable output',
       {
-        stdout: result.stdout,
         stderr: result.stderr,
         exitCode: result.exitCode,
+        instrumentation,
         ...androidCaptureFailureReasonDetail(
           androidCaptureFailureReasonFromExitCode(result.exitCode),
         ),
@@ -311,7 +348,7 @@ function decodeHelperXml(
   ).toString('utf8');
   if (!xml.includes('<hierarchy') || !xml.includes('</hierarchy>')) {
     throw new AppError('COMMAND_FAILED', 'Android snapshot helper output did not contain XML', {
-      xml,
+      xmlLength: xml.length,
     });
   }
   return xml;

@@ -68,6 +68,9 @@ async function captureFromAndroidSnapshotHelperSession(params: {
       },
     };
   } catch (error) {
+    // Read before the retirement below, which ends the process: a process that is still running
+    // has no cause of its own to report, and the retirement never waits for one.
+    const instrumentation = session.processRecord.current();
     await retireFailedAndroidSnapshotHelperSession({
       deviceKey,
       identity: session.identity,
@@ -83,6 +86,7 @@ async function captureFromAndroidSnapshotHelperSession(params: {
       data: {
         deviceKey,
         reason: error instanceof Error ? error.message : String(error),
+        instrumentation,
         // The typed reason the session protocol already published, not a second
         // comparison against the helper's error type: one owner, one taxonomy (#1983).
         uiAutomationConnectionTimeout:

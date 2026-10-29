@@ -14,6 +14,8 @@ export type ExecResult = {
   stderr: string;
   exitCode: number;
   stdoutBuffer?: Buffer;
+  /** The signal that ended the process, when one did. */
+  signal?: string;
 };
 
 export type ExecOptions = {
@@ -46,7 +48,8 @@ export type ExecStreamOptions = ExecOptions & {
 
 export type ExecBackgroundResult = {
   child: ReturnType<typeof spawn>;
-  wait: Promise<ExecResult>;
+  /** A background run reports no `signal`: its caller owns the child and reads its exit directly. */
+  wait: Promise<Omit<ExecResult, 'signal'>>;
 };
 
 type ExecDetachedOptions = ExecOptions & {
@@ -268,12 +271,14 @@ function runSpawnedCommand(
         reject(failure);
         return;
       }
-      resolve({
-        stdout,
-        stderr,
-        exitCode: finalExitCode,
-        stdoutBuffer: stdoutChunks ? Buffer.concat(stdoutChunks) : undefined,
-      });
+      resolve(
+        execResult(child, {
+          stdout,
+          stderr,
+          exitCode: finalExitCode,
+          stdoutBuffer: stdoutChunks ? Buffer.concat(stdoutChunks) : undefined,
+        }),
+      );
     }
     // A deadline that fires after the child exited on its own still has to settle: the
     // group kill that would have ended the pipe holder can no longer run through a child
@@ -334,6 +339,11 @@ function runSpawnedCommand(
       settle(code);
     });
   });
+}
+
+/** Returns the result with `signal` added when a signal terminated the process. */
+function execResult(ended: { signalCode: string | null }, result: ExecResult): ExecResult {
+  return ended.signalCode ? { ...result, signal: ended.signalCode } : result;
 }
 
 export async function whichCmd(cmd: string, env: EnvMap): Promise<boolean> {
@@ -449,7 +459,7 @@ export function runCmdSync(
     throw createExitError(executable, cmd, args, exitCode, stdout, stderr);
   }
 
-  return { stdout, stderr, exitCode, stdoutBuffer };
+  return execResult({ signalCode: result.signal }, { stdout, stderr, exitCode, stdoutBuffer });
 }
 
 export function runCmdDetached(
@@ -524,7 +534,7 @@ export function runCmdBackground(
     });
   }
 
-  const wait = new Promise<ExecResult>((resolve, reject) => {
+  const wait = new Promise<Omit<ExecResult, 'signal'>>((resolve, reject) => {
     let settled = false;
     function finish(event: 'error' | 'exit'): boolean {
       if (settled) return false;

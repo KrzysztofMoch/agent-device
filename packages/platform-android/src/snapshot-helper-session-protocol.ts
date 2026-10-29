@@ -5,6 +5,7 @@ import {
   androidCaptureFailureReasonFromHelperResult,
 } from './snapshot-capture-failure-reason.ts';
 import {
+  type AndroidInstrumentationProcessRecord,
   readInstrumentationResultBoolean,
   readInstrumentationResultIntegerList,
   readInstrumentationResultNumber,
@@ -111,10 +112,24 @@ export async function requestAndroidSnapshotHelperSessionSnapshot(params: {
 const SESSION_READY_TIMEOUT_REASON = 'android_snapshot_helper_session_ready_timeout';
 const SESSION_EXITED_BEFORE_READY_REASON = 'android_snapshot_helper_session_exited_before_ready';
 
+const SESSION_EXIT_DRAIN_MS = 250;
+
+/** Resolves when the process's streams have closed, or after the drain budget, whichever is first. */
+function settleAfterDrain(record: AndroidInstrumentationProcessRecord): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, SESSION_EXIT_DRAIN_MS);
+    void record.closed.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 export function waitForAndroidSnapshotHelperSessionReady(
   childProcess: AndroidAdbProcess,
   timeoutMs: number,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  record: AndroidInstrumentationProcessRecord,
 ): Promise<ReadonlySet<string>> {
   return new Promise((resolve, reject) => {
     let output = '';
@@ -122,7 +137,7 @@ export function waitForAndroidSnapshotHelperSessionReady(
       signal?.removeEventListener('abort', onAbort);
       reject(
         new AppError('COMMAND_FAILED', 'Android snapshot helper session did not become ready', {
-          output,
+          instrumentation: record.current(),
           timeoutMs,
           reason: SESSION_READY_TIMEOUT_REASON,
         }),
@@ -154,15 +169,19 @@ export function waitForAndroidSnapshotHelperSessionReady(
     childProcess.stderr?.on('data', onData);
     childProcess.once('exit', (code, exitSignal) => {
       clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(
-        new AppError('COMMAND_FAILED', 'Android snapshot helper session exited before ready', {
-          output,
-          exitCode: code,
-          signal: exitSignal,
-          reason: SESSION_EXITED_BEFORE_READY_REASON,
-        }),
-      );
+      // The exit result waits for the streams to drain, but not for an adb whose forked server
+      // keeps them open; cancellation stays armed until the promise settles.
+      void settleAfterDrain(record).then(() => {
+        signal?.removeEventListener('abort', onAbort);
+        reject(
+          new AppError('COMMAND_FAILED', 'Android snapshot helper session exited before ready', {
+            exitCode: code,
+            signal: exitSignal,
+            instrumentation: record.exitResult() ?? record.current(),
+            reason: SESSION_EXITED_BEFORE_READY_REASON,
+          }),
+        );
+      });
     });
     childProcess.on('error', (error) => {
       clearTimeout(timer);
@@ -223,7 +242,7 @@ export function parseAndroidSnapshotHelperSessionSnapshotResponse(
     throw new AppError(
       'COMMAND_FAILED',
       'Android snapshot helper session returned malformed output',
-      { response },
+      { responseLength: response.length },
     );
   }
   const headers = parseHeaders(response.slice(0, separator));
@@ -277,7 +296,7 @@ function validateSnapshotXml(headers: Record<string, string>, xml: string): void
   if (!xml.includes('<hierarchy') || !xml.includes('</hierarchy>')) {
     throw new AppError('COMMAND_FAILED', 'Android snapshot helper session did not return XML', {
       headers,
-      xml,
+      xmlLength: xml.length,
     });
   }
 }
