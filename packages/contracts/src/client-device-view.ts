@@ -110,7 +110,8 @@ export type DeviceBootOptions = DeviceCommandBaseOptions & {
   /**
    * When the request names no device and several equally preferred devices match, all shut down,
    * boot one instead of failing with `AMBIGUOUS_MATCH`. `newest`: mobile over TV, newest OS
-   * version, then name (stopped Android AVDs report no OS version, so the name decides). Several
+   * version, then name, which is alphabetical rather than device age (stopped Android AVDs report no
+   * OS version, so the name decides). Several
    * booted matches still fail. `selection.reason` reports the pick.
    */
   pick?: BootPickPolicy;

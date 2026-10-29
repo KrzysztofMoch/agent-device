@@ -98,7 +98,7 @@ const bootCommandMetadata = defineFieldCommandMetadata(
     headless: booleanField('Boot without showing simulator UI when supported.'),
     pick: enumField(
       BOOT_PICK_POLICIES,
-      'When no device is named and several equally preferred devices match, all shut down, boot one instead of failing: newest picks mobile over TV, then the newest OS version, then the name, which alone decides for stopped Android AVDs because they report no OS version. Several booted matches still fail.',
+      'When no device is named and several equally preferred devices match, all shut down, boot one instead of failing: newest picks mobile over TV, then the newest OS version, then the name (alphabetical, not device age), which alone decides for stopped Android AVDs because they report no OS version. Several booted matches still fail.',
     ),
     timeoutMs: integerField(
       'Startup budget in milliseconds. Bounds the boot wait, so a never-booted Simulator can finish its first-boot migration or a cold emulator its boot; omit for the default startup behavior.',

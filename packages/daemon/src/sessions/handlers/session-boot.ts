@@ -135,6 +135,6 @@ export async function handleBootCommand(
       ? await (await admitted.bind(target, plan.use)).operations.bootTargetHeadless(input)
       : await (await admitted.bind(target, plan.use)).operations.bootTarget(input);
 
-  const { device: _selected, ...metadata } = markSelectionBootOccurred(selection) ?? selection;
+  const { device: _selected, ...metadata } = markSelectionBootOccurred(selection);
   return deviceStatusReportResponse(device, { booted: true, selection: metadata });
 }

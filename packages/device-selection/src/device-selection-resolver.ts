@@ -38,7 +38,8 @@ export type InventoryDeviceSelectionParams = {
 /** A boot request. `pick` is its `--pick` opt-in; without it, a shut-down tie names the opt-in. */
 export type BootSelectionIntent = { pick?: BootPickPolicy };
 
-const BOOT_PICK_HINT = 'To boot one of these shut-down devices, pass --pick newest.';
+const BOOT_PICK_HINT =
+  'To boot one of these shut-down devices, pass --pick newest (pick: "newest" from Node or MCP).';
 
 export async function resolveInventoryDeviceSelection(
   params: InventoryDeviceSelectionParams,
@@ -97,6 +98,10 @@ export function resolveExistingSessionDeviceSelection(device: DeviceInfo): Devic
  * target that was stopped at resolution has provided the requested boot event;
  * provider and physical targets never claim a daemon-owned boot.
  */
+export function markSelectionBootOccurred(selection: DeviceSelectionResult): DeviceSelectionResult;
+export function markSelectionBootOccurred(
+  selection: DeviceSelectionResult | undefined,
+): DeviceSelectionResult | undefined;
 export function markSelectionBootOccurred(
   selection: DeviceSelectionResult | undefined,
 ): DeviceSelectionResult | undefined {
