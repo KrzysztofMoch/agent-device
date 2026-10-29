@@ -144,3 +144,59 @@ test('shared admission cannot hide an additional inspection behind an alias', ()
     'shared runtime admission must call requireFactsInspection directly without aliasing it',
   ]);
 });
+
+test('a capability bucket in a descriptor family module is rejected', () => {
+  assert.deepEqual(
+    messages([
+      [
+        ADMISSION,
+        admission(
+          'requireFactsInspection(request.inspectFacts); requireDeviceBinding(request.bindDevice);',
+        ),
+      ],
+      [
+        'packages/command-registry/src/descriptors/local-cli.ts',
+        `const descriptor = { name: 'focus', capability: { apple: {} } };`,
+      ],
+    ]),
+    ['command descriptors may not restore capability-bucket admission'],
+  );
+});
+
+for (const module of ['descriptor-traits.ts', 'descriptor-extra-traits.ts']) {
+  test(`a conditional capability bucket in ${module} is rejected`, () => {
+    assert.deepEqual(
+      messages([
+        [
+          ADMISSION,
+          admission(
+            'requireFactsInspection(request.inspectFacts); requireDeviceBinding(request.bindDevice);',
+          ),
+        ],
+        [
+          `packages/command-registry/src/${module}`,
+          `export const traits = { ...(enabled ? { capability: { apple: {} } } : {}) };`,
+        ],
+      ]),
+      ['command descriptors may not restore capability-bucket admission'],
+    );
+  });
+}
+
+test('test-support capability objects are outside the declaration policy', () => {
+  assert.deepEqual(
+    messages([
+      [
+        ADMISSION,
+        admission(
+          'requireFactsInspection(request.inspectFacts); requireDeviceBinding(request.bindDevice);',
+        ),
+      ],
+      [
+        'packages/command-registry/src/__tests__/capability-fixture.ts',
+        'const fixture = { capability: { apple: {} } };',
+      ],
+    ]),
+    [],
+  );
+});

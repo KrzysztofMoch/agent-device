@@ -7,7 +7,7 @@ Before you edit a module with many callers, run `pnpm depgraph affected <path>` 
 | Question | Owner |
 | --- | --- |
 | Command names | `packages/command-registry/src/catalog.ts` |
-| Surface, runtime, batch, timeout, daemon route and policy traits | `packages/command-registry/src/registry.ts` |
+| Command declarations | `packages/command-registry/src/`: `registry.ts`, `descriptor-*.ts`, `descriptors/` |
 | Daemon request-policy predicates | `packages/daemon/src/core/daemon-command-registry.ts` |
 | Interaction guarantees | `packages/contracts/src/interaction-guarantees.ts` |
 | Runtime-fact admission | `packages/daemon/src/core/runtime-admission.ts`, `src/platform-runtime-gateway.ts` |
