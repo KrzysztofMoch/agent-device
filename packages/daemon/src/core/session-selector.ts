@@ -29,9 +29,11 @@ export function assertSessionSelectorMatches(ref: SessionRef, flags?: CommandFla
   const mismatches = listSessionSelectorConflicts(session, flags);
   if (mismatches.length === 0) return;
 
+  const udidHint = describeDeviceUdidSelectorConflict(session, mismatches);
   throw new AppError(
     'INVALID_ARGS',
-    `Session "${address}" is already bound to ${describeSessionDevice(session)}, but this request selected ${mismatches.map(formatSessionSelectorConflict).join(', ')}.`,
+    `Session "${address}" is already bound to ${describeSessionDevice(session)}, but this request selected ${mismatches.map(formatSessionSelectorConflict).join(', ')}.` +
+      (udidHint ? ` ${udidHint}` : ''),
     {
       session: address,
       conflicts: mismatches.map(formatSessionSelectorConflict),
@@ -96,6 +98,24 @@ export function listSessionSelectorConflicts(
   }
 
   return mismatches;
+}
+
+/**
+ * `--device` selects by name and `--udid` by ID (#3945). A `--device` conflict whose value is the
+ * bound Apple device's UDID is the caller naming the right device with the wrong flag, so the
+ * refusal says which flag takes that value instead of only rejecting it.
+ */
+export function describeDeviceUdidSelectorConflict(
+  session: SessionState,
+  conflicts: SessionSelectorConflict[],
+): string | undefined {
+  const device = session.device;
+  if (!isIosFamily(device)) return undefined;
+  const udidAsDevice = conflicts.some(
+    (conflict) => conflict.key === 'device' && conflict.value === device.id,
+  );
+  if (!udidAsDevice) return undefined;
+  return `--device selects a device by name; select this device by UDID with --udid ${device.id}.`;
 }
 
 export function formatSessionSelectorConflict(conflict: SessionSelectorConflict): string {
