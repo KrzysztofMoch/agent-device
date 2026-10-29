@@ -9,7 +9,11 @@ import { resolveRemoteConfigProfile } from '@agent-device/remote/remote-config';
 // resolveRemoteConfigProfile.
 import { readRemoteConfigFile } from '@agent-device/remote/remote-config-core';
 import { shouldAgentCdpUseRemoteBridgeUrl } from './agent-cdp.ts';
-import { isInactiveLeaseError } from '@agent-device/contracts/lease-scope';
+import {
+  isInactiveLeaseError,
+  readLeaseAllocateProviderFlags,
+  requireLeaseDeviceSpec,
+} from '@agent-device/contracts/lease-scope';
 import {
   narrowConnectionPlatform,
   buildRemoteConnectionDaemonState,
@@ -22,7 +26,7 @@ import {
   type RemoteConnectionRequestMetadata,
 } from '@agent-device/remote/remote-connection-state';
 import { profileToCliFlags } from '../remote-config-flags.ts';
-import type { BatchStep } from '@agent-device/contracts/client';
+import type { BatchStep, LeaseDevice } from '@agent-device/contracts/client';
 import { AppError } from '@agent-device/kernel/errors';
 import {
   isSessionRuntimePlatform,
@@ -39,10 +43,10 @@ import {
   connectionProviderCapabilities,
   primeProviderConnection,
 } from '../connection/provider-policy.ts';
-import { readCloudDeviceFeatureProfileFields } from '../connection/profile-fields.ts';
 import type { PreviousLeaseReleaseNotice } from './connection-presentation.ts';
 import {
   bindLeaseNamedDevice,
+  grantedLeaseDevice,
   resolveProxyLeaseState,
   type ResolvedLeaseState,
 } from './proxy-lease-device.ts';
@@ -73,6 +77,7 @@ export async function materializeRemoteConnectionForCommand(options: {
   flags: CliFlags;
   runtime?: SessionRuntimeHints;
   connection?: RemoteConnectionRequestMetadata;
+  leaseDevice?: LeaseDevice;
 }> {
   const { command, flags, client, host } = options;
   if (!flags.remoteConfig) {
@@ -202,6 +207,7 @@ export async function materializeRemoteConnectionForCommand(options: {
     },
     runtime: nextRuntime,
     connection: buildRemoteConnectionRequestMetadata(nextState),
+    leaseDevice: grantedLeaseDevice(nextState),
   };
 }
 
@@ -910,6 +916,13 @@ async function allocateOrReuseLease(
       hint: 'Ask the host for a new macos-app lease and update the remote config.',
     });
   }
+  // The spec rides only a by-spec allocate, so it is added below rather than taken from the flags.
+  const {
+    osVersion: _osVersion,
+    imageTag: _imageTag,
+    physical: _physical,
+    ...providerFlags
+  } = readLeaseAllocateProviderFlags(flags);
   const lease = await client.leases.allocate({
     tenant: state.tenant,
     runId: state.runId,
@@ -918,25 +931,11 @@ async function allocateOrReuseLease(
     ...connection,
     ...(allocateBySpec ? { deviceKey: undefined } : {}),
     ttlMs: policy.ttlMs(state),
+    ...providerFlags,
     platform: state.platform ?? flags.platform,
     target: state.target ?? flags.target,
-    device: flags.device,
-    udid: flags.udid,
-    serial: flags.serial,
-    iosSimulatorDeviceSet: flags.iosSimulatorDeviceSet,
-    androidDeviceAllowlist: flags.androidDeviceAllowlist,
+    ...(allocateBySpec ? requireLeaseDeviceSpec(flags).spec : {}),
     providerApp: initialApp ?? flags.providerApp,
-    providerOsVersion: flags.providerOsVersion,
-    providerDeviceType: flags.providerDeviceType,
-    providerProject: flags.providerProject,
-    providerBuild: flags.providerBuild,
-    providerSessionName: flags.providerSessionName,
-    ...readCloudDeviceFeatureProfileFields(flags),
-    awsProjectArn: flags.awsProjectArn,
-    awsDeviceArn: flags.awsDeviceArn,
-    awsAppArn: flags.awsAppArn,
-    awsRegion: flags.awsRegion,
-    awsInteractionMode: flags.awsInteractionMode,
   });
   return { lease, acquired: true };
 }

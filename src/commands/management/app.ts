@@ -9,14 +9,23 @@ import {
   enumField,
   integerField,
   jsonSchemaField,
+  leaseDeviceSpecFields,
   optionField,
   stringArrayField,
   stringField,
   stringSchema,
 } from '../command-input.ts';
-import { commonInputFromFlags, direct, optionalString } from '../cli-grammar/common.ts';
+import {
+  commonInputFromFlags,
+  direct,
+  leaseDeviceSpecInputFromFlags,
+  optionalString,
+} from '../cli-grammar/common.ts';
 import type { CliReader, CommandInput, DaemonWriter } from '../cli-grammar/types.ts';
-import { METRO_RELOAD_FLAGS } from '@agent-device/command-registry/flag-groups';
+import {
+  LEASE_DEVICE_SPEC_FLAGS,
+  METRO_RELOAD_FLAGS,
+} from '@agent-device/command-registry/flag-groups';
 import { defineCommandFacet } from '../family/types.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
 import { withCommandRuntimeHints } from '../runtime-hints.ts';
@@ -79,6 +88,7 @@ const openCommandMetadata = defineFieldCommandMetadata(
     launchUrl: stringField(
       'Launch URL for the opened app; does not select the server used by metro reload.',
     ),
+    ...leaseDeviceSpecFields(),
   },
 );
 
@@ -130,6 +140,7 @@ const openCliSchema = {
     'surface',
     ...METRO_RELOAD_FLAGS,
     'launchUrl',
+    ...LEASE_DEVICE_SPEC_FLAGS,
   ],
 } as const satisfies CommandSchemaOverride;
 
@@ -163,6 +174,7 @@ const openCliReader: CliReader = (positionals, flags) => ({
   metroPort: flags.metroPort,
   bundleUrl: flags.bundleUrl,
   launchUrl: flags.launchUrl,
+  ...leaseDeviceSpecInputFromFlags(flags),
 });
 
 const closeCliReader: CliReader = (positionals, flags) => ({

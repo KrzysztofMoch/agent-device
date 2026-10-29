@@ -14,6 +14,9 @@ import {
   leaseScopeToRequestMeta,
   parseLeaseDeviceKey,
   readLeaseAllocateProviderFlags,
+  readLeaseDevice,
+  readLeaseDeviceSpec,
+  requireLeaseDeviceSpec,
 } from '../lease-scope.ts';
 
 test('leaseScopeFromOptions normalizes public aliases and projects request meta', () => {
@@ -243,6 +246,88 @@ test('readLeaseAllocateProviderFlags carries the provider-allocation flags and d
     { providerApp: 'bs://abc' },
   );
   assert.deepEqual(readLeaseAllocateProviderFlags(undefined), {});
+});
+
+test('readLeaseAllocateProviderFlags carries a named or invalid spec key as given, and drops one that names nothing', () => {
+  assert.deepEqual(
+    readLeaseAllocateProviderFlags({
+      platform: 'android',
+      osVersion: '34',
+      imageTag: 'google_apis_playstore',
+      physical: true,
+    }),
+    { platform: 'android', osVersion: '34', imageTag: 'google_apis_playstore', physical: true },
+  );
+  assert.deepEqual(
+    readLeaseAllocateProviderFlags({ osVersion: '', imageTag: ' ', physical: false }),
+    {},
+  );
+  // An invalid key still reaches the daemon, which refuses it rather than never seeing it.
+  assert.deepEqual(readLeaseAllocateProviderFlags({ osVersion: 26, physical: 'yes' }), {
+    osVersion: 26,
+    physical: 'yes',
+  });
+});
+
+test('readLeaseDeviceSpec decides each key is named, not named, or invalid', () => {
+  assert.deepEqual(
+    readLeaseDeviceSpec({ osVersion: '>=26', imageTag: 'google_apis', physical: true }),
+    {
+      spec: { osVersion: '>=26', imageTag: 'google_apis', physical: true },
+      keys: ['osVersion', 'imageTag', 'physical'],
+      invalidKeys: [],
+    },
+  );
+  const notNamed = { spec: {}, keys: [], invalidKeys: [] };
+  assert.deepEqual(readLeaseDeviceSpec(undefined), notNamed);
+  assert.deepEqual(readLeaseDeviceSpec({}), notNamed);
+  assert.deepEqual(
+    readLeaseDeviceSpec({ osVersion: '', imageTag: '  ', physical: false }),
+    notNamed,
+  );
+  assert.deepEqual(readLeaseDeviceSpec({ osVersion: 26, imageTag: null, physical: 'yes' }), {
+    spec: {},
+    keys: [],
+    invalidKeys: ['osVersion', 'imageTag', 'physical'],
+  });
+  assert.deepEqual(readLeaseDeviceSpec({ osVersion: '18', physical: 1 }), {
+    spec: { osVersion: '18' },
+    keys: ['osVersion'],
+    invalidKeys: ['physical'],
+  });
+});
+
+test('readLeaseDeviceSpec uses a named value as given and names nothing for a blank one', () => {
+  assert.deepEqual(readLeaseDeviceSpec({ osVersion: ' 34 ', imageTag: '\t' }), {
+    spec: { osVersion: ' 34 ' },
+    keys: ['osVersion'],
+    invalidKeys: [],
+  });
+});
+
+test('requireLeaseDeviceSpec refuses an invalid key with device-spec-invalid', () => {
+  assert.deepEqual(requireLeaseDeviceSpec({ osVersion: '', physical: true }), {
+    spec: { physical: true },
+    keys: ['physical'],
+  });
+  assert.throws(() => requireLeaseDeviceSpec({ physical: 'yes' }), {
+    code: 'INVALID_ARGS',
+    details: { reason: 'device-spec-invalid', keys: ['physical'] },
+  });
+});
+
+test('readLeaseDevice reads the granted facts and rejects an echo missing one', () => {
+  const pixel = { model: 'Pixel 9', osVersion: '34', imageTag: 'google_apis', physical: false };
+  assert.deepEqual(readLeaseDevice(pixel), pixel);
+  const iphone = { model: 'iPhone 17 Pro', osVersion: '26.0', physical: true };
+  assert.deepEqual(readLeaseDevice(iphone), iphone);
+  assert.equal(readLeaseDevice({ model: 'iPhone 17 Pro', osVersion: '26.0' }), undefined);
+  assert.equal(readLeaseDevice({ osVersion: '26.0', physical: true }), undefined);
+  assert.equal(
+    readLeaseDevice({ model: 'iPhone 17 Pro', osVersion: '26.0', physical: 'yes' }),
+    undefined,
+  );
+  assert.equal(readLeaseDevice(undefined), undefined);
 });
 
 test('isInactiveLeaseError recognizes the lease being gone, and refuses a request mismatch', () => {
