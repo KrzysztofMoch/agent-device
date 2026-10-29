@@ -13,6 +13,7 @@ import type { DaemonRequest } from '../../core/daemon-request.ts';
 import type { SessionRef } from '../../core/session-state.ts';
 import { recordSessionAction } from '../../core/session-action-recorder.ts';
 import { errorResponse } from '@agent-device/kernel/contracts';
+import { withCaptureOutputOwnership } from '../../core/capture-output-ownership.ts';
 
 export function handleTraceCommand(params: {
   host: HostEnvironment;
@@ -43,7 +44,13 @@ function startTrace(
   );
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.appendFileSync(outPath, '');
-  session.trace = { outPath, startedAt: Date.now() };
+  session.trace = {
+    outPath,
+    startedAt: Date.now(),
+    clientOutPath: req.meta?.clientArtifactPaths?.outPath,
+    ...(req.internal?.publicNetworkOnly ? { remoteCaptureOutputPath: outPath } : {}),
+    remoteCaptureTenantId: session.lease?.tenantId ?? req.meta?.tenantId,
+  };
   recordSessionAction(sessionStore, ref, req, req.command, { action: 'start', outPath });
   return {
     ok: true,
@@ -60,24 +67,33 @@ function stopTrace(
   const session = sessionStore.requireCurrent(ref);
   if (!session.trace) return errorResponse('INVALID_ARGS', 'no active trace');
   const outPath = relocateTraceOutput(host, session.trace.outPath, req.positionals?.[1]);
+  const daemonOwned = session.trace.remoteCaptureOutputPath === outPath;
+  const tenantId = session.trace.remoteCaptureTenantId;
+  const clientOutPath =
+    req.meta?.clientArtifactPaths?.outPath ??
+    session.trace.clientOutPath ??
+    (req.internal?.publicNetworkOnly ? undefined : outPath);
   session.trace = undefined;
   recordSessionAction(sessionStore, ref, req, req.command, { action: 'stop', outPath });
-  const clientOutPath = req.meta?.clientArtifactPaths?.outPath ?? outPath;
   return {
     ok: true,
-    data: {
-      trace: 'stopped',
-      outPath,
-      artifacts: [
-        {
-          field: 'outPath',
-          artifactType: 'trace-log',
-          path: outPath,
-          localPath: clientOutPath,
-          fileName: path.basename(clientOutPath),
-        },
-      ],
-    } satisfies TraceCommandResult,
+    data: withCaptureOutputOwnership(
+      {
+        trace: 'stopped',
+        outPath,
+        artifacts: [
+          {
+            field: 'outPath',
+            artifactType: 'trace-log',
+            path: outPath,
+            localPath: clientOutPath,
+            fileName: path.basename(clientOutPath ?? outPath),
+          },
+        ],
+      } satisfies TraceCommandResult,
+      daemonOwned ? 'daemon' : 'caller',
+      tenantId,
+    ),
   };
 }
 

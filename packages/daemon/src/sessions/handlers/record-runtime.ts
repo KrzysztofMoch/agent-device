@@ -52,6 +52,7 @@ import type {
 } from '../../core/request-runtime-binding.ts';
 import type { DaemonRequest } from '../../core/daemon-request.ts';
 import type { SessionRef, SessionState } from '../../core/session-state.ts';
+import { withCaptureOutputOwnership } from '../../core/capture-output-ownership.ts';
 import { recordSessionAction } from '../../core/session-action-recorder.ts';
 import {
   missingAppSessionResponse,
@@ -65,11 +66,13 @@ import {
   resolveRecordingOutputPaths,
 } from '@agent-device/capture-kit/recording-output-path';
 import { buildRemoteTempArtifactPath } from '@agent-device/contracts/daemon-http';
+import { randomUUID } from 'node:crypto';
 import {
   buildRecordingStartResponse,
   buildRecordingStartedAction,
   buildRecordingStopResponse,
   buildRecordingUnsupportedResponse,
+  isDaemonOwnedRecordingOutput,
 } from './record-runtime-response.ts';
 
 /**
@@ -255,6 +258,7 @@ async function startRecording(
   const started = await runtime.operations.screenRecordingStart(
     screenRecordingStartInput(params, session, prepared, fence, outputPaths),
   );
+  const tenantId = session.lease?.tenantId ?? params.req.meta?.tenantId;
   await adoptStartedScreenRecording({
     admissionLedger: params.admissionLedger,
     binding,
@@ -262,6 +266,17 @@ async function startRecording(
     owner: runtime.owner,
     fence,
     ...started,
+    envelope:
+      params.req.internal?.publicNetworkOnly || tenantId
+        ? {
+            ...started.envelope,
+            metadata: {
+              ...started.envelope.metadata,
+              ...(params.req.internal?.publicNetworkOnly ? { remoteCaptureOutput: true } : {}),
+              ...(tenantId ? { remoteCaptureTenantId: tenantId } : {}),
+            },
+          }
+        : started.envelope,
     throwIfCanceled: params.throwIfCanceled,
   });
   const adoptedRef = ref ?? draft!.requireRef();
@@ -297,6 +312,7 @@ function prepareRecordingStart(params: RecordRuntimeHandlerParams, session: Sess
       params.req,
       session.device.platform,
       params.sessionStore.host.cwd,
+      params.sessionStore.ensureSessionDir(params.sessionName),
     ),
   };
 }
@@ -307,9 +323,23 @@ function resolveRecordingStartPaths(
   req: DaemonRequest,
   platform: Platform,
   hostCwd: string,
+  sessionDir: string,
 ): RecordingStartPaths {
   const requestedPath = req.positionals?.[1];
   const clientOutputPath = req.meta?.clientArtifactPaths?.outPath;
+  if (req.internal?.publicNetworkOnly) {
+    const extension = recordingExtensionForPlatform(platform);
+    return {
+      ...resolveRecordingOutputPaths({
+        requestedPath: path.join(sessionDir, `recording-${randomUUID()}${extension}`),
+        platform,
+        cwd: hostCwd,
+      }),
+      ...(clientOutputPath === undefined
+        ? {}
+        : { clientOutputPath: appendRecordingExtensionWhenMissing(clientOutputPath, extension) }),
+    };
+  }
   if (requestedPath === undefined && clientOutputPath !== undefined) {
     // A remote caller that names no path cannot know the session platform's extension, so it sends
     // its local destination without one; its cwd does not exist on this host.
@@ -387,6 +417,20 @@ async function stopRecording(
   }
   const completion = stopped.completion;
   const response = buildRecordingStopResponse(completion);
+  const resourcePath = screenRecordingDurableResource.resourcePath(
+    params.sessionStore,
+    params.sessionName,
+  );
+  const record = screenRecordingDurableResource.store.read(resourcePath);
+  const daemonOwned = isDaemonOwnedRecordingOutput(
+    completion,
+    record.status === 'decoded' && record.envelope.metadata?.remoteCaptureOutput === true,
+  );
+  const tenantId =
+    record.status === 'decoded' &&
+    typeof record.envelope.metadata?.remoteCaptureTenantId === 'string'
+      ? record.envelope.metadata.remoteCaptureTenantId
+      : session.lease?.tenantId;
   if (stopped.recordsSessionAction) {
     recordSessionAction(params.sessionStore, ref, params.req, params.req.command, {
       action: 'stop',
@@ -398,7 +442,16 @@ async function stopRecording(
     });
   }
   if (session.recordOnlySession && ref) params.sessionStore.retire(ref);
-  return response;
+  return response.ok && response.data
+    ? {
+        ...response,
+        data: withCaptureOutputOwnership(
+          response.data,
+          daemonOwned ? 'daemon' : 'caller',
+          tenantId,
+        ),
+      }
+    : response;
 }
 
 function deleteTerminalRecordOnlySession(

@@ -13,6 +13,7 @@ import {
   appendRecordingExtensionWhenMissing,
   recordingExtensionForPlatform,
 } from '@agent-device/capture-kit/recording-output-path';
+import { parsePerfRuntimeRequest } from '@agent-device/capture-kit/perf-runtime-plan';
 import { uploadArtifact } from './upload-client.ts';
 import { createStderrUploadProgressReporter, type UploadProgressSink } from './upload-progress.ts';
 
@@ -258,72 +259,111 @@ async function prepareRemoteInstallSource(
   };
 }
 
-function prepareRemoteArtifactCommand(
-  req: Omit<DaemonWireRequest, 'token'>,
-  positionals: string[],
-  host: HostEnvironment,
-): {
+type RemoteArtifactCommand = {
   field: string;
   localPath: string;
   positionalIndex?: number;
   positionalPath?: string;
   flagKey?: string;
   flagPath?: string;
-} | null {
-  if (req.command === 'screenshot') {
-    const localPath = resolveClientArtifactOutputPath(req, 'path', '.png', host);
-    if (positionals[0]) {
+};
+
+function prepareRemoteArtifactCommand(
+  req: Omit<DaemonWireRequest, 'token'>,
+  positionals: string[],
+  host: HostEnvironment,
+): RemoteArtifactCommand | null {
+  switch (req.command) {
+    case 'screenshot':
+      return prepareRemoteScreenshot(req, positionals, host);
+    case 'record':
+      return (positionals[0] ?? '').toLowerCase() === 'start'
+        ? prepareRemoteRecording(req, host)
+        : null;
+    case 'perf':
+    case 'trace':
+      return prepareRemotePerformance(req, positionals, host);
+    case 'test':
       return {
-        field: 'path',
-        localPath,
-        positionalIndex: 0,
-        positionalPath: buildRemoteTempArtifactPath('screenshot', '.png'),
+        field: 'artifactsDir',
+        localPath: resolveClientArtifactOutputRoot(req, host),
+        flagKey: 'artifactsDir',
+        flagPath: buildRemoteTempArtifactDirPath('test-artifacts'),
       };
-    }
+    default:
+      return null;
+  }
+}
+
+function prepareRemoteScreenshot(
+  req: Omit<DaemonWireRequest, 'token'>,
+  positionals: string[],
+  host: HostEnvironment,
+): RemoteArtifactCommand {
+  const localPath = resolveClientArtifactOutputPath(req, 'path', '.png', host);
+  if (positionals[0]) {
     return {
       field: 'path',
       localPath,
       positionalIndex: 0,
-      flagPath: buildRemoteTempArtifactPath('screenshot', '.png'),
+      positionalPath: buildRemoteTempArtifactPath('screenshot', '.png'),
     };
   }
-  if (req.command === 'record' && (positionals[0] ?? '').toLowerCase() === 'start') {
-    if (!recordingHasRequestedClientPath(req) && req.flags?.platform === undefined) {
-      // The extension follows the session platform, which only the daemon knows: it completes
-      // this destination and records to a temp path on its own host.
-      return {
-        field: 'outPath',
-        localPath: resolveAbsoluteClientPath(`recording-${Date.now()}`, req.meta?.cwd, host),
-      };
-    }
-    const fallbackExtension = recordingFallbackExtension(req);
-    const localPath = normalizeRecordingClientArtifactPath(
-      resolveClientArtifactOutputPath(req, 'outPath', fallbackExtension, host, 1),
-      req,
-    );
+  return {
+    field: 'path',
+    localPath,
+    positionalIndex: 0,
+    flagPath: buildRemoteTempArtifactPath('screenshot', '.png'),
+  };
+}
+
+function prepareRemoteRecording(
+  req: Omit<DaemonWireRequest, 'token'>,
+  host: HostEnvironment,
+): RemoteArtifactCommand {
+  if (!recordingHasRequestedClientPath(req) && req.flags?.platform === undefined) {
+    // The extension follows the session platform, which only the daemon knows: it completes
+    // this destination and records to a temp path on its own host.
     return {
       field: 'outPath',
-      localPath,
-      positionalIndex: 1,
-      positionalPath: buildRemoteTempArtifactPath(
-        'recording',
-        path.extname(localPath) || fallbackExtension,
-      ),
+      localPath: resolveAbsoluteClientPath(`recording-${Date.now()}`, req.meta?.cwd, host),
     };
   }
-  if (req.command === 'test') {
-    // #2246: `test` always materializes a suite artifacts directory, whether or not the caller
-    // passed `--artifacts-dir` — unlike `record`, there is no "nothing to redirect" case here.
-    // Resolving the caller-local root here (not on the daemon) mirrors #1802's read-side fix for
-    // the same command: the daemon must never resolve a path against the caller's `cwd`.
-    return {
-      field: 'artifactsDir',
-      localPath: resolveClientArtifactOutputRoot(req, host),
-      flagKey: 'artifactsDir',
-      flagPath: buildRemoteTempArtifactDirPath('test-artifacts'),
-    };
-  }
-  return null;
+  const fallbackExtension = recordingFallbackExtension(req);
+  const localPath = normalizeRecordingClientArtifactPath(
+    resolveClientArtifactOutputPath(req, 'outPath', fallbackExtension, host, 1),
+    req,
+  );
+  return {
+    field: 'outPath',
+    localPath,
+    positionalIndex: 1,
+    positionalPath: buildRemoteTempArtifactPath(
+      'recording',
+      path.extname(localPath) || fallbackExtension,
+    ),
+  };
+}
+
+function prepareRemotePerformance(
+  req: Omit<DaemonWireRequest, 'token'>,
+  positionals: string[],
+  host: HostEnvironment,
+): RemoteArtifactCommand | null {
+  const perfRequest =
+    req.command === 'perf'
+      ? parsePerfRuntimeRequest({ positionals, outPath: req.flags?.out })
+      : undefined;
+  const requestedPath = perfRequest
+    ? 'outPath' in perfRequest
+      ? perfRequest.outPath
+      : undefined
+    : (positionals[1] ?? req.flags?.out);
+  if (!hasNonEmptyString(requestedPath)) return null;
+  return {
+    field: 'outPath',
+    localPath: resolveAbsoluteClientPath(requestedPath, req.meta?.cwd, host),
+  };
 }
 
 function resolveClientArtifactOutputRoot(

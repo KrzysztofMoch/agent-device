@@ -1,3 +1,4 @@
+import { resolveSessionTestArtifactsRoot } from '@agent-device/daemon-contracts/session-artifact-paths';
 import type { HostEnvironment } from '@agent-device/kernel/source-value';
 import type { DaemonPlatformServices } from '../../core/platform-services.ts';
 import { AppError } from '@agent-device/kernel/errors';
@@ -87,8 +88,19 @@ export const handleReplayTestCommand: SessionCommandHandler = async ({
     retainDeviceExecutionLock,
     throwIfCanceled,
   });
+  const suiteRequest = req.internal?.publicNetworkOnly
+    ? {
+        ...req,
+        flags: {
+          ...req.flags,
+          artifactsDir: resolveSessionTestArtifactsRoot(
+            sessionStore.resolveSessionDir(sessionName),
+          ),
+        },
+      }
+    : req;
   return await runReplayTestCommand({
-    ...splitReplayCommandRequest(req),
+    ...splitReplayCommandRequest(suiteRequest),
     host,
     session: createReplaySession(sessionName, logPath, sessionStore),
     createSession: (testSessionName, testLogPath) =>

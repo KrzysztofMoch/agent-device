@@ -33,6 +33,7 @@ import { tryHandleDownloadableArtifactHttpRoute } from '../../server/downloadabl
 import { finalizeDaemonResponse } from '../../server/request-finalization.ts';
 import { buildRecordingStopResponse } from '../handlers/record-runtime-response.ts';
 import { teardownSessionResources } from '../session-teardown.ts';
+import { makeRecordRuntimeHarness } from '../handlers/__tests__/record-runtime.fixtures.ts';
 
 const tracking = vi.hoisted(() => ({ failOnCall: 0, calls: 0 }));
 vi.mock('../../resources/artifact-tracking.ts', async (importOriginal) => {
@@ -279,16 +280,19 @@ test('a record stop replay after a leased teardown serves the artifacts teardown
   ]);
 });
 
-test('a leased teardown leaves a local caller export at its path and registers nothing', async () => {
-  const sessionStore = makeSessionStore('agent-device-leased-recording-local-');
-  const recordingExport = localRecordingExport();
-  publishRecordingSession(sessionStore, recordingExport);
+test.each([undefined, '/client/local-copy.mp4'])(
+  'a leased teardown leaves a local caller export at its path and registers nothing with client destination %s',
+  async (clientOutPath) => {
+    const sessionStore = makeSessionStore('agent-device-leased-recording-local-');
+    const recordingExport = { ...localRecordingExport(), clientOutPath };
+    publishRecordingSession(sessionStore, recordingExport);
 
-  await teardown(sessionStore);
+    await teardown(sessionStore);
 
-  expect(await listDownloadableArtifacts(TENANT, process.env)).toEqual([]);
-  expect(fs.readFileSync(recordingExport.outPath, 'utf8')).toBe('video');
-});
+    expect(await listDownloadableArtifacts(TENANT, process.env)).toEqual([]);
+    expect(fs.readFileSync(recordingExport.outPath, 'utf8')).toBe('video');
+  },
+);
 
 test('an unleased session teardown registers nothing for a remote export', async () => {
   const sessionStore = makeSessionStore('agent-device-unleased-recording-');
@@ -301,3 +305,50 @@ test('an unleased session teardown registers nothing for a remote export', async
   expect(await listDownloadableArtifacts(undefined, process.env)).toEqual([]);
   expect(fs.existsSync(recordingExport.outPath)).toBe(true);
 });
+
+test.each([undefined, '/client/downloads/checkout.mp4'])(
+  'remote admission retains session-owned recordings after leased teardown with client destination %s',
+  async (clientOutPath) => {
+    const harness = makeRecordRuntimeHarness('leased-remote-session-recording-', {
+      sessionName: ADDRESS,
+    });
+    harness.session.lease = { leaseId: 'lease-1', tenantId: TENANT, runId: 'run-1' };
+    const start = harness.runtime.start.getMockImplementation()!;
+    harness.runtime.start.mockImplementation(async (input) => {
+      fs.writeFileSync(input.outputPath, 'session-owned-video');
+      return await start(input);
+    });
+    const started = await harness.run(
+      ['start'],
+      clientOutPath ? { clientArtifactPaths: { outPath: clientOutPath } } : undefined,
+      undefined,
+      { publicNetworkOnly: true },
+    );
+    expect(started.ok).toBe(true);
+    const output = harness.runtime.start.mock.calls[0]![0].outputPath;
+    expect(path.dirname(output)).toBe(harness.sessionStore.resolveSessionDir(ADDRESS));
+
+    await teardown(harness.sessionStore);
+
+    const artifacts = await listDownloadableArtifacts(TENANT, process.env);
+    expect(artifacts).toEqual([
+      expect.objectContaining({
+        artifactType: 'screen-recording',
+        filename: path.basename(clientOutPath ?? output),
+        sessionName: 'checkout-flow',
+      }),
+    ]);
+    expect(await listDownloadableArtifacts('tenant-b', process.env)).toEqual([]);
+    expect(fs.readFileSync(output, 'utf8')).toBe('session-owned-video');
+    expect(
+      screenRecordingResourceStore.read(
+        screenRecordingResourceStore.resolvePath(harness.sessionStore.resolveSessionDir(ADDRESS)),
+      ),
+    ).toMatchObject({
+      status: 'decoded',
+      envelope: { lifecycle: 'completed', metadata: { remoteCaptureOutput: true } },
+    });
+    cleanupDownloadableArtifact(artifacts[0]!.id);
+    expect(fs.existsSync(output)).toBe(false);
+  },
+);

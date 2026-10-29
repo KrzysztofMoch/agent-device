@@ -46,7 +46,11 @@ export async function invokeMaestroPublicOperation<Operation extends MaestroPubl
   options: CreateDaemonMaestroRuntimeOperationsOptions,
   operation: Operation,
 ): Promise<MaestroPublicOperationResult<Operation>> {
-  const projected = projectMaestroPublicOperation(operation);
+  const projected = projectMaestroPublicOperation(
+    operation.kind === 'screenshot' && options.publicNetworkOnly
+      ? { ...operation, path: undefined }
+      : operation,
+  );
   const response = await options.invoke(
     stripUndefined({ ...projected, flags: flagsWith(options.flags, projected.flags ?? {}) }),
   );

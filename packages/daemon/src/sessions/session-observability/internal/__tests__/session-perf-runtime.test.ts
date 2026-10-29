@@ -211,6 +211,7 @@ test('perf native capture is adopted durably and stop uses the live handle witho
       command: 'perf',
       positionals: ['trace', 'start', 'xctrace'],
       flags: { out: '/tmp/app.trace' },
+      meta: { clientArtifactPaths: { outPath: '/client/app.trace' } },
     },
   });
   assert.equal(startResponse?.ok, true, JSON.stringify(startResponse));
@@ -254,6 +255,7 @@ test('perf native capture is adopted durably and stop uses the live handle witho
     },
   });
   assert.equal(stopResponse?.ok, true, JSON.stringify(stopResponse));
+  if (stopResponse?.ok) assert.equal(stopResponse.data?.clientOutPath, '/client/app.trace');
   assert.equal(finish.mock.calls.length, 1);
   assert.deepEqual(runtime.uses, [['perfNativeCaptureStart']]);
   assert.equal(sessionStore.get('android')?.perfCapture, undefined);

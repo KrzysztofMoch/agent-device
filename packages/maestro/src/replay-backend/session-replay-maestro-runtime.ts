@@ -347,7 +347,7 @@ function createMaestroReplayPort(params: {
   };
   return createDaemonMaestroRuntimePort({
     invoke: (operation) => invoke(maestroOperationDispatchRequest(replay, operation)),
-    flags: maestroRuntimeDeviceFlags(device, platform, req.flags),
+    flags: maestroRuntimeDeviceFlags(device, platform, req.flags, publicNetworkOnly),
     publicNetworkOnly,
     platform,
     sourcePath,
@@ -364,6 +364,7 @@ function maestroRuntimeDeviceFlags(
   device: DeviceInfo | undefined,
   platform: Extract<MaestroPlatform, 'android' | 'ios'>,
   requestedFlags: CommandFlags | undefined,
+  publicNetworkOnly: boolean,
 ): CommandFlags {
   if (!device) return unresolvedMaestroRuntimeDeviceFlags(platform, requestedFlags);
   const flags: CommandFlags = {
@@ -376,7 +377,9 @@ function maestroRuntimeDeviceFlags(
   return {
     ...flags,
     udid: device.id,
-    ...(device.simulatorSetPath ? { iosSimulatorDeviceSet: device.simulatorSetPath } : {}),
+    ...(!publicNetworkOnly && device.simulatorSetPath
+      ? { iosSimulatorDeviceSet: device.simulatorSetPath }
+      : {}),
   };
 }
 

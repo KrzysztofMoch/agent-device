@@ -145,7 +145,8 @@ async function prepareReplayTestSuitePlan(
   const entries = discoverReplayTestSuiteEntries(request, discoverSources);
   const runnable = runnableReplayTestEntries(entries);
   const skippedCount = entries.length - runnable.length;
-  const suiteInvocationId = buildReplayTestInvocationId(request.requestId);
+  const suiteInvocationId =
+    request.suiteInvocationId ?? buildReplayTestInvocationId(request.requestId);
   const shardPlan = await buildReplayTestShardPlan(
     request.shard ? { kind: request.shard.mode, count: request.shard.count } : undefined,
     runnable,

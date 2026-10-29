@@ -35,11 +35,17 @@ export function bindSessionAudioProbe(sessionStore: SessionStore, ref: SessionRe
   });
 }
 
-export function bindSessionPerfCapture(sessionStore: SessionStore, ref: SessionRef) {
+export function bindSessionPerfCapture(
+  sessionStore: SessionStore,
+  ref: SessionRef,
+  clientOutPath?: string,
+) {
   return bindSessionCapture(sessionStore, ref, {
     read: (session) => session.perfCapture,
     write: (perfCapture) => {
-      sessionStore.update(ref, { perfCapture });
+      sessionStore.update(ref, {
+        perfCapture: perfCapture ? { ...perfCapture, clientOutPath } : undefined,
+      });
     },
   });
 }

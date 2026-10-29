@@ -43,7 +43,7 @@ bindTestCommandHost();
 
 const {
   handleSessionCommands,
-  makeSession,
+  makeIosSimulatorRecordingSession,
   makeSessionStore,
   mkdtempForTestSync,
   noopInvoke,
@@ -58,20 +58,12 @@ beforeEach(() => {
   stopEvents.failing.clear();
 });
 
-const ANDROID_DEVICE: SessionState['device'] = {
-  platform: 'android',
-  id: 'emulator-5554',
-  name: 'Pixel',
-  kind: 'emulator',
-  booted: true,
-};
-
-// The mocked finishers never touch the live handles; only their presence selects each stop.
-function sessionWithEveryResource(name: string): SessionState {
+function sessionWithEveryResource(
+  sessionStore: ReturnType<typeof makeSessionStore>,
+  name: string,
+): SessionState {
   return {
-    ...makeSession(name, ANDROID_DEVICE),
-    appBundleId: 'com.example.app',
-    screenRecording: {} as SessionState['screenRecording'],
+    ...makeIosSimulatorRecordingSession(sessionStore, name),
     appLog: {} as SessionState['appLog'],
     audioProbe: {} as SessionState['audioProbe'],
     perfCapture: {} as SessionState['perfCapture'],
@@ -95,7 +87,7 @@ const CALLERS: readonly Caller[] = [
     name: 'daemon teardown',
     run: ({ sessionName }) => {
       const sessionStore = makeSessionStore();
-      sessionStore.publish(sessionName, sessionWithEveryResource(sessionName));
+      sessionStore.publish(sessionName, sessionWithEveryResource(sessionStore, sessionName));
       return teardownSessionResources({
         appLog: 'run',
         ref: sessionStore.lookup(sessionName)!,
@@ -108,7 +100,7 @@ const CALLERS: readonly Caller[] = [
     name: 'ordinary close',
     run: ({ sessionName }) => {
       const sessionStore = makeSessionStore();
-      sessionStore.publish(sessionName, sessionWithEveryResource(sessionName));
+      sessionStore.publish(sessionName, sessionWithEveryResource(sessionStore, sessionName));
       return handleSessionCommands({
         host: createTestHostEnvironment(),
         createCommandSurface: fakeCreateCommandSurface,
@@ -158,7 +150,7 @@ test.each(CALLERS)(
 test('daemon teardown omits the app-log stop once the app-log fence has settled', async () => {
   const sessionName = 'stop-already-settled-session';
   const sessionStore = makeSessionStore();
-  sessionStore.publish(sessionName, sessionWithEveryResource(sessionName));
+  sessionStore.publish(sessionName, sessionWithEveryResource(sessionStore, sessionName));
 
   await teardownSessionResources({
     appLog: 'already-settled',

@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { AppError, normalizeError, toAppErrorCode } from '@agent-device/kernel/errors';
 import { timingSafeStringEqual } from '@agent-device/host-kit/transport';
 import type { DaemonRequest } from '../../core/daemon-request.ts';
+import { restrictRemoteHostInputs } from '../remote-host-input-policy.ts';
 import {
   DAEMON_HTTP_PUBLIC_NETWORK_ACCESS,
   DAEMON_HTTP_TENANT_HEADER,
@@ -77,11 +78,11 @@ function restrictRemoteHttpRequest(
     providerCredentialFingerprint: _providerCredentialFingerprint,
     ...meta
   } = request.meta ?? {};
-  return {
+  return restrictRemoteHostInputs({
     ...request,
     ...(request.meta ? { meta } : {}),
     internal: { ...request.internal, publicNetworkOnly: true },
-  };
+  });
 }
 
 async function runHttpAuthHook(

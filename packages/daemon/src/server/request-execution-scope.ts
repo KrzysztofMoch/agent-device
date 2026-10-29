@@ -1,3 +1,4 @@
+import { restrictRemoteHostInputs } from './remote-host-input-policy.ts';
 import type { EnvMap, HostEnvironment } from '@agent-device/kernel/source-value';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { buildOpenTargetDeviceResolutionOptions } from '@agent-device/device-selection/open-target';
@@ -230,7 +231,9 @@ export async function createRequestExecutionScope(params: {
   daemonPolicy?: DaemonPolicy;
 }): Promise<RequestExecutionScope> {
   const { sessionStore, leaseRegistry } = params;
-  let scopedReq = applyRequestCommandDefaults(scopeRequestSession(params.req));
+  let scopedReq = applyRequestCommandDefaults(
+    scopeRequestSession(restrictRemoteHostInputs(params.req)),
+  );
 
   const command = scopedReq.command;
   const startedAtMs = Date.now();

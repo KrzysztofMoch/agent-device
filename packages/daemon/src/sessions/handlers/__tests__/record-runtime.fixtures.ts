@@ -85,7 +85,12 @@ export function makeRecordRuntimeHarness(
     sessionName,
     sessionStore,
     runtime,
-    run: (positionals: string[], meta?: DaemonRequest['meta'], flags?: DaemonRequest['flags']) =>
+    run: (
+      positionals: string[],
+      meta?: DaemonRequest['meta'],
+      flags?: DaemonRequest['flags'],
+      internal?: DaemonRequest['internal'],
+    ) =>
       handleRecordCommand({
         platformServices: daemonPlatformServicesFixture(),
         ...common,
@@ -95,6 +100,7 @@ export function makeRecordRuntimeHarness(
           command: 'record',
           positionals,
           flags: flags ?? {},
+          ...(internal ? { internal } : {}),
           ...(meta ? { meta } : {}),
         },
       }),

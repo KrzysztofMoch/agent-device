@@ -30,6 +30,7 @@ import {
   invokeMaestroPublicOperation,
   type CreateDaemonMaestroRuntimeOperationsOptions,
 } from './daemon-runtime-port-support.ts';
+import { captureMaestroComparisonScreenshot } from './maestro-comparison-screenshot.ts';
 import type { MaestroClickOptions } from './daemon-runtime-public-operation.ts';
 
 export async function resolveDaemonMaestroTarget(params: {
@@ -93,12 +94,7 @@ export async function tapTargetAndSettle(
       signal: context.signal,
       capture: async (path) => {
         metrics.screenshotCaptures += 1;
-        await invokeMaestroPublicOperation(options, {
-          kind: 'screenshot',
-          path,
-          stabilize: false,
-          captureBackend: 'runner',
-        });
+        await captureMaestroComparisonScreenshot(options, path);
       },
       run: async (baseline) =>
         await tapTargetWithRetry(

@@ -1,5 +1,6 @@
 /** Runs the replay-test scheduler and its nested replay attempts. */
 
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CommandFlags, DaemonWireRequest } from '@agent-device/contracts/command';
@@ -184,7 +185,10 @@ export async function runReplayTestCommand(command: ReplayTestCommand): Promise<
   // replay attempt executes exactly the text the caller read for that file.
   let sourceBundles: readonly ReplayScriptSourceBundle[];
   try {
-    suiteRequest = toReplayTestSuiteRequest(req, sessionName, command.host.cwd);
+    suiteRequest = {
+      ...toReplayTestSuiteRequest(req, sessionName, command.host.cwd),
+      ...(command.publicNetworkOnly ? { suiteInvocationId: randomUUID() } : {}),
+    };
     sourceBundles = requireReplayTestScriptSources(req);
   } catch (error) {
     const appErr = asAppError(error);

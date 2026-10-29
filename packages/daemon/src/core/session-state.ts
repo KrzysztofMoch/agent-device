@@ -215,10 +215,14 @@ export type SessionState = {
   snapshotDiagnostics?: SnapshotDiagnosticsState;
   trace?: {
     outPath: string;
+    clientOutPath?: string;
+    remoteCaptureOutputPath?: string;
+    remoteCaptureTenantId?: string;
     startedAt: number;
   };
   /** Native profiling mechanics stay behind one exact-owner durable handle. */
   perfCapture?: {
+    clientOutPath?: string;
     handle: PerfNativeCaptureLiveHandle;
     envelope: DurableResourceEnvelope<'perf-capture'>;
   };

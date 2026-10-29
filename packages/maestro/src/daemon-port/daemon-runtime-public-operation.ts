@@ -42,7 +42,7 @@ export type MaestroPublicOperation =
   | { kind: 'swipe'; gesture: MaestroSinglePointerGestureInput; viewport?: Rect }
   | { kind: 'scroll'; direction: string; durationMs?: number }
   | { kind: 'pressKey'; key: 'back' | 'home' | 'enter' | 'return' | 'dismiss' }
-  | { kind: 'screenshot'; path: string; stabilize?: boolean; captureBackend?: 'runner' }
+  | { kind: 'screenshot'; path?: string; stabilize?: boolean; captureBackend?: 'runner' }
   | { kind: 'snapshot' }
   | { kind: 'gestureViewport' };
 
@@ -392,7 +392,7 @@ function projectCaptureOperation(
     case 'screenshot':
       return {
         command: 'screenshot',
-        positionals: [operation.path],
+        positionals: operation.path === undefined ? [] : [operation.path],
         ...(operation.stabilize === false || operation.captureBackend === 'runner'
           ? {
               flags: {

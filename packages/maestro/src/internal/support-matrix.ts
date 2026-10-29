@@ -12,6 +12,7 @@ export const MAESTRO_COMPAT_LIMITATIONS = [
   'Environment: flow env is the default, AD_VAR_* overrides it, and CLI -e KEY=VALUE wins over both.',
   'Failure diagnostics: resolved targets and runFlow paths are rendered, while inputText payloads remain hidden; do not place secrets in diagnostic identifiers.',
   'Trust: runScript, evalScript, and JavaScript condition true: fields execute flow scripts in-process via node:vm, which is not a security sandbox; runScript may make http.post network requests and its output keys cannot contain a dot. Remote flows refuse runScript before reading its file, including files supplied in the replay bundle, and refuse evalScript and true: fields that need JavaScript. Run these scripts only in trusted local flows. Local runScript paths refer to the daemon filesystem: relative paths resolve from the containing flow, and absolute paths and symlinks are allowed.',
+  'Remote screenshots: takeScreenshot uses a daemon-generated path and reports that path in artifactPaths. The flow cannot choose a file destination on the daemon host. Animation waits and tap retry comparisons use temporary screenshots that are removed after comparison.',
   'Errors and tracking: unsupported commands and fields fail with source context when available; open a focused issue only when implementation work is planned.',
 ] as const;
 

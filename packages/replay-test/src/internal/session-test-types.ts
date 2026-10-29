@@ -35,8 +35,10 @@ export type ReplayTestSuiteRequest = Readonly<{
   /** Paths and globs to expand. Never empty; the adapter rejects an empty invocation. */
   inputs: readonly string[];
   cwd?: string;
-  /** Correlation id for attempt identity and the suite invocation id. */
+  /** Correlation id for attempt identity and the default local suite invocation id. */
   requestId?: string;
+  /** Host-owned invocation identity, independent of caller correlation. */
+  suiteInvocationId?: string;
   /** Base session name that attempt sessions derive from. */
   sessionName: string;
   platformFilter?: PlatformSelector;

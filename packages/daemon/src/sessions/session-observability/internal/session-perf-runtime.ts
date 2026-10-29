@@ -36,6 +36,7 @@ import type { SessionStore } from '../../../core/session-store.ts';
 import type { DaemonRequest } from '../../../core/daemon-request.ts';
 import type { SessionRef, SessionState } from '../../../core/session-state.ts';
 import { bindSessionPerfCapture } from '../../../core/session-capture-binding.ts';
+import { withCaptureOutputOwnership } from '../../../core/capture-output-ownership.ts';
 import { recordSessionAction } from '../../../core/session-action-recorder.ts';
 import {
   admitRuntimePlan,
@@ -152,7 +153,14 @@ async function executeAdmittedPerfPlan(
           'artifacts',
         ),
       });
-      return { ok: true, data: buildMemorySnapshotResponse(session, result) };
+      return {
+        ok: true,
+        data: withCaptureOutputOwnership(
+          buildMemorySnapshotResponse(session, result),
+          params.req.internal?.publicNetworkOnly ? 'daemon' : 'caller',
+          session.lease?.tenantId ?? params.req.meta?.tenantId,
+        ),
+      };
     }
     case 'capture-start': {
       const runtime = await bindDevice(device, plan.use);
@@ -183,7 +191,14 @@ async function executeAdmittedPerfPlan(
         template: plan.request.template ?? (last?.kind === 'xctrace' ? last.template : undefined),
         profile: last,
       });
-      return { ok: true, data: { perf: 'reported', ...data } };
+      return {
+        ok: true,
+        data: withCaptureOutputOwnership(
+          { perf: 'reported', ...data },
+          params.req.internal?.publicNetworkOnly ? 'daemon' : 'caller',
+          session.lease?.tenantId ?? params.req.meta?.tenantId,
+        ),
+      };
     }
   }
 }
@@ -220,7 +235,11 @@ async function startPerfCapture(
     resourcePath,
     device: session.device,
   });
-  const binding = bindSessionPerfCapture(params.sessionStore, params.ref);
+  const binding = bindSessionPerfCapture(
+    params.sessionStore,
+    params.ref,
+    params.req.meta?.clientArtifactPaths?.outPath,
+  );
   binding.assertAdoptable();
   const started = await runtime.operations.perfNativeCaptureStart({
     sessionId: params.sessionName,
@@ -231,6 +250,7 @@ async function startPerfCapture(
     outPath,
     fence,
   });
+  const tenantId = session.lease?.tenantId ?? params.req.meta?.tenantId;
   await adoptStartedPerfCapture({
     admissionLedger: requirePerfCaptureAdmissionLedger(params),
     binding,
@@ -238,7 +258,16 @@ async function startPerfCapture(
     owner: runtime.owner,
     fence,
     pendingHandle: started.pendingHandle,
-    envelope: started.envelope,
+    envelope: params.req.internal?.publicNetworkOnly
+      ? {
+          ...started.envelope,
+          metadata: {
+            ...started.envelope.metadata,
+            remoteCaptureOutputPath: outPath,
+            ...(tenantId ? { remoteCaptureTenantId: tenantId } : {}),
+          },
+        }
+      : started.envelope,
     throwIfCanceled: params.throwIfCanceled,
   });
   return { ok: true, data: started.response };
@@ -276,7 +305,21 @@ async function stopPerfCapture(
     const profile = readProfileHandoff(completion);
     params.sessionStore.update(params.ref, { lastPerfProfile: profile });
   }
-  return { ok: true, data: completion };
+  const clientOutPath = params.req.meta?.clientArtifactPaths?.outPath ?? capture.clientOutPath;
+  const tenantId =
+    typeof capture.envelope.metadata?.remoteCaptureTenantId === 'string'
+      ? capture.envelope.metadata.remoteCaptureTenantId
+      : session.lease?.tenantId;
+  return {
+    ok: true,
+    data: withCaptureOutputOwnership(
+      { ...completion, ...(clientOutPath ? { clientOutPath } : {}) },
+      capture.envelope.metadata?.remoteCaptureOutputPath === completion.outPath
+        ? 'daemon'
+        : 'caller',
+      tenantId,
+    ),
+  };
 }
 
 function readProfileHandoff(snapshot: PerfNativeCaptureSnapshot): PerfProfileHandoff {

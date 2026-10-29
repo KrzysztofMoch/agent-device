@@ -7,6 +7,18 @@ import type {
 } from '@agent-device/contracts/screen-recording-runtime';
 import type { RuntimeOperationUnavailability } from '@agent-device/contracts/platform-runtime';
 import { deriveRecordingTelemetryPath } from '@agent-device/capture-kit/recording-telemetry';
+import { isRemoteTempArtifactPath } from '@agent-device/contracts/daemon-http';
+
+export function isDaemonOwnedRecordingOutput(
+  completion: ScreenRecordingCompletion,
+  remoteCaptureOutput: boolean,
+): boolean {
+  return (
+    remoteCaptureOutput ||
+    (completion.clientOutPath !== undefined &&
+      isRemoteTempArtifactPath(completion.outPath, 'recording', path.extname(completion.outPath)))
+  );
+}
 
 export function buildRecordingStartResponse(
   snapshot: ScreenRecordingLiveSnapshot,

@@ -80,6 +80,7 @@ export type DownloadableArtifactRegistration = {
   displayRotation?: DeviceRotation;
   /** Public session name, for an artifact registered outside a request reply. */
   sessionName?: string;
+  deleteAfterDownload?: boolean;
 };
 
 export type TrackDownloadableArtifact = (registration: DownloadableArtifactRegistration) => string;
@@ -96,9 +97,7 @@ export type PreparedDownloadableArtifact = {
  * returns its existing entry unchanged: two ids for one file would each delete it after their own
  * download.
  */
-export function trackDownloadableArtifact(
-  params: DownloadableArtifactRegistration & { deleteAfterDownload?: boolean },
-): string {
+export function trackDownloadableArtifact(params: DownloadableArtifactRegistration): string {
   const existingId = findTrackedArtifactId(params.artifactPath, params.tenantId);
   if (existingId) return existingId;
   const artifactId = crypto.randomUUID();

@@ -9,6 +9,11 @@ export function resolveSessionRunnerLogPath(sessionDir: string): string {
   return path.join(sessionDir, 'runner.log');
 }
 
+/** Root for daemon-owned replay test invocations in one session. */
+export function resolveSessionTestArtifactsRoot(sessionDir: string): string {
+  return path.join(sessionDir, 'test-artifacts');
+}
+
 /** Path to request-scoped daemon diagnostics for this session. */
 export function resolveSessionRequestLogPath(
   sessionDir: string,

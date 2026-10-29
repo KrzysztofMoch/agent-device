@@ -12,6 +12,7 @@ import { registerDiagnosticSensitiveValue } from '@agent-device/host-kit/diagnos
 import { AppError } from '@agent-device/kernel/errors';
 import { stripUndefined } from '@agent-device/kernel/record';
 import { executeRunScriptFile } from './run-script-execution.ts';
+import { captureMaestroComparisonScreenshot } from './maestro-comparison-screenshot.ts';
 import { waitForMaestroAnimationToEnd } from './wait-for-animation-to-end.ts';
 import {
   observeTypedMaestroCondition,
@@ -343,12 +344,8 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
         now: options.dependencies.now,
         signal: context.signal,
         capture: async (screenshotPath) => {
-          await invoke({
-            kind: 'screenshot',
-            path: screenshotPath,
-            stabilize: false,
-            ...(options.platform === 'ios' ? { captureBackend: 'runner' as const } : {}),
-          });
+          metrics.screenshotCaptures += 1;
+          await captureMaestroComparisonScreenshot(options, screenshotPath);
         },
       });
       return { visualStabilityReached };
