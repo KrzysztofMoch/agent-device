@@ -270,6 +270,7 @@ const DEVICE_SELECTION_REASONS: readonly DeviceSelectionMetadata['reason'][] = [
   'single-booted-local',
   'single-bootable-local',
   'single-app-installed-local',
+  'newest-bootable-local',
   'preferred-local',
   'single-provider-device',
 ];

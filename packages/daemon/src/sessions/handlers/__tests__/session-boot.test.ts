@@ -1,5 +1,5 @@
 import { daemonPlatformServicesFixture } from '../../../__tests__/support/platform-services-fixture.ts';
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import * as path from 'node:path';
 import { AppError } from '@agent-device/kernel/errors';
 import {
@@ -13,6 +13,7 @@ import { createUnavailablePlatformRuntimeFacts } from '@agent-device/contracts/p
 import { applicationLifecycleOperationFacts } from '@agent-device/contracts/application-lifecycle-runtime';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { handleBootCommand } from '../session-boot.ts';
+import { resolveTargetDeviceSelection } from '@agent-device/device-selection/dispatch-resolve';
 import type { SessionState } from '../../../core/session-state.ts';
 import {
   handleSessionCommands,
@@ -110,6 +111,59 @@ test('boot prefers explicit device selector over active session device', async (
     expect(response.data?.platform).toBe('ios');
     expect(response.data?.id).toBe('sim-2');
   }
+});
+
+test('boot --pick reaches selection and reports the picked device it started', async () => {
+  const picked: SessionState['device'] = {
+    platform: 'apple',
+    id: 'sim-picked',
+    name: 'iPhone 17',
+    kind: 'simulator',
+    target: 'mobile',
+    booted: false,
+  };
+  const mockSelection = vi.mocked(resolveTargetDeviceSelection);
+  mockSelection.mockResolvedValueOnce({
+    device: picked,
+    reason: 'newest-bootable-local',
+    source: 'local',
+    candidateCount: 3,
+    bootOccurred: false,
+  });
+
+  const response = await handleSessionCommands({
+    host: createTestHostEnvironment(),
+    createCommandSurface: fakeCreateCommandSurface,
+    platformServices: daemonPlatformServicesFixture(),
+    req: {
+      token: 't',
+      session: 'default',
+      command: 'boot',
+      positionals: [],
+      flags: { platform: 'ios', pick: 'newest' },
+    },
+    sessionName: 'default',
+    logPath: path.join(mkdtempForTestSync('daemon'), 'daemon.log'),
+    sessionStore: makeSessionStore(),
+    invoke: noopInvoke,
+  });
+
+  expect(response?.ok, JSON.stringify(response)).toBe(true);
+  expect(mockSelection.mock.calls.at(-1)?.[1]).toMatchObject({
+    androidAvdSelection: 'include-stopped',
+    boot: { pick: 'newest' },
+  });
+  if (!response?.ok) return;
+  expect(response.data).toMatchObject({
+    id: 'sim-picked',
+    booted: true,
+    selection: {
+      reason: 'newest-bootable-local',
+      source: 'local',
+      candidateCount: 3,
+      bootOccurred: true,
+    },
+  });
 });
 
 test('boot --timeout forwards a startup deadline to bootTarget (#3004)', async () => {

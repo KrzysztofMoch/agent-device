@@ -2,6 +2,7 @@
 
 import type {
   AppleOS,
+  BootPickPolicy,
   DeviceKind,
   DeviceTarget,
   PublicPlatform,
@@ -106,6 +107,14 @@ export type StartupPerfSample = {
 
 export type DeviceBootOptions = DeviceCommandBaseOptions & {
   headless?: boolean;
+  /**
+   * When the request names no device and several equally preferred devices match, all shut down,
+   * boot one instead of failing with `AMBIGUOUS_MATCH`. `newest`: mobile over TV, newest OS
+   * version, then the first name in name order, with numbers compared by value; that is not device
+   * age (stopped Android AVDs report no OS version, so the name decides). Several booted matches
+   * still fail. `selection.reason` reports the pick.
+   */
+  pick?: BootPickPolicy;
   /** Startup budget in milliseconds: bounds the boot wait on a cold Simulator or emulator. */
   timeoutMs?: number;
 };

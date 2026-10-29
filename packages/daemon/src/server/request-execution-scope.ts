@@ -136,8 +136,12 @@ async function resolveBoundedClaimDevice(
   env: EnvMap,
   platformServices: DaemonPlatformServices,
 ): Promise<DeviceInfo> {
-  const { resolveCommandDevice, resolvePowerCommandDevice, requireSessionOrExplicitSelector } =
-    await import('../resources/session-device-resolution.ts');
+  const {
+    resolveBootCommandSelection,
+    resolveCommandDevice,
+    resolvePowerCommandDevice,
+    requireSessionOrExplicitSelector,
+  } = await import('../resources/session-device-resolution.ts');
   if (req.command !== 'open') {
     const guard = requireSessionOrExplicitSelector(req.command, session, req.flags);
     if (guard && !guard.ok) {
@@ -147,11 +151,10 @@ async function resolveBoundedClaimDevice(
   }
   if (req.command === 'open') return await resolveFreshBoundedOpenDevice(req, env);
   if (req.command === 'install_source' && session) return session.device;
-  const resolve =
-    req.command === 'boot' || req.command === 'shutdown'
-      ? resolvePowerCommandDevice
-      : resolveCommandDevice;
-  return await resolve({ session, flags: req.flags, env, platformServices });
+  const params = { session, flags: req.flags, env, platformServices };
+  if (req.command === 'boot') return (await resolveBootCommandSelection(params)).device;
+  const resolve = req.command === 'shutdown' ? resolvePowerCommandDevice : resolveCommandDevice;
+  return await resolve(params);
 }
 
 // Production daemon wiring owns one LeaseRegistry per process; scoping locks by registry keeps

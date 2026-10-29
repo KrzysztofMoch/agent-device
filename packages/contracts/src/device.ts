@@ -5,13 +5,15 @@ import type {
   PublicPlatform,
 } from '@agent-device/kernel/device';
 import type { TargetShutdownResult } from './target-shutdown-contract.ts';
+import type { DeviceSelectionMetadata } from './client-app.ts';
 
 /**
  * Closed result of the `boot` command. Mirrors the daemon handler's only
  * success return EXACTLY (packages/daemon/src/sessions/handlers/session-boot.ts via
  * session-device-status-response.ts) — the fixed
  * object literal `{ platform, target, device, id, kind, booted }` plus the
- * additive `appleOs` discriminant, emitted only for Apple devices.
+ * additive `appleOs` discriminant, emitted only for Apple devices, and the
+ * additive `selection` evidence.
  */
 export type BootCommandResult = {
   platform: PublicPlatform;
@@ -29,6 +31,8 @@ export type BootCommandResult = {
    * leaf (`ios`/`macos`) — this is an extra field, not a replacement.
    */
   appleOs?: AppleOS;
+  /** How the daemon chose this device, as on `open`. */
+  selection?: DeviceSelectionMetadata;
 };
 
 /**

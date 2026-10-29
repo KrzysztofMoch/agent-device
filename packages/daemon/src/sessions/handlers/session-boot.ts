@@ -5,8 +5,12 @@ import { asAppError } from '@agent-device/kernel/errors';
 import { errorResponse } from '@agent-device/kernel/contracts';
 import { resolveAndroidSerialAllowlist } from '@agent-device/kernel/device-isolation';
 import {
+  markSelectionBootOccurred,
+  type DeviceSelectionResult,
+} from '@agent-device/device-selection/device-selection-resolver';
+import {
   requireSessionOrExplicitSelector,
-  resolvePowerCommandDevice,
+  resolveBootCommandSelection,
 } from '../../resources/session-device-resolution.ts';
 import {
   admitRuntimeOperations,
@@ -44,20 +48,21 @@ function hasAndroidAvdIdentity(
  * turns the resolver's `DEVICE_NOT_FOUND` into the argument error that names the missing
  * `--device <avd-name>`; every other resolution failure propagates unchanged.
  */
-async function resolveBootTargetDevice(
+async function resolveBootTargetSelection(
   params: RuntimeCommandHandlerParams,
   headless: boolean,
-): Promise<DeviceInfo | { refusal: DaemonResponse }> {
+): Promise<DeviceSelectionResult | { refusal: DaemonResponse }> {
   const { sessionName, sessionStore, req, platformServices } = params;
   const session = sessionStore.get(sessionName);
   const flags = req.flags ?? {};
   try {
-    const device = await resolvePowerCommandDevice({
+    const selection = await resolveBootCommandSelection({
       session,
       flags,
       env: sessionStore.host.env,
       platformServices,
     });
+    const { device } = selection;
     if (flags.target && (device.target ?? 'mobile') !== flags.target) {
       return {
         refusal: errorResponse(
@@ -66,7 +71,7 @@ async function resolveBootTargetDevice(
         ),
       };
     }
-    return device;
+    return selection;
   } catch (error) {
     if (
       headless &&
@@ -105,8 +110,9 @@ export async function handleBootCommand(
     : undefined;
   const plan = resolveDeviceReadinessRuntimePlan({ headless: flags.headless === true });
 
-  const target = await resolveBootTargetDevice(params, plan.kind === 'boot-target-headless');
-  if ('refusal' in target) return target.refusal;
+  const selection = await resolveBootTargetSelection(params, plan.kind === 'boot-target-headless');
+  if ('refusal' in selection) return selection.refusal;
+  const target = selection.device;
 
   const admitted = await admitRuntimeOperations({
     command: 'boot',
@@ -129,5 +135,6 @@ export async function handleBootCommand(
       ? await (await admitted.bind(target, plan.use)).operations.bootTargetHeadless(input)
       : await (await admitted.bind(target, plan.use)).operations.bootTarget(input);
 
-  return deviceStatusReportResponse(device, { booted: true });
+  const { device: _selected, ...metadata } = markSelectionBootOccurred(selection);
+  return deviceStatusReportResponse(device, { booted: true, selection: metadata });
 }

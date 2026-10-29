@@ -4,7 +4,14 @@ import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
 import { AppError, sessionOrDeviceSelectorRequiredDetails } from '@agent-device/kernel/errors';
 import { isActiveProviderDevice } from '../core/provider-device-admission.ts';
 import type { DaemonPlatformServices } from '../core/platform-services.ts';
-import { resolveTargetDevice } from '@agent-device/device-selection/dispatch-resolve';
+import {
+  resolveTargetDevice,
+  resolveTargetDeviceSelection,
+} from '@agent-device/device-selection/dispatch-resolve';
+import {
+  resolveExistingSessionDeviceSelection,
+  type DeviceSelectionResult,
+} from '@agent-device/device-selection/device-selection-resolver';
 import type { DaemonRequest } from '../core/daemon-request.ts';
 import type { SessionState } from '../core/session-state.ts';
 import {
@@ -69,11 +76,33 @@ export async function resolveCommandDevice(params: {
   return hostApp && device.id === hostApp.hostDeviceId ? params.session!.device : device;
 }
 
+type PowerCommandDeviceParams = Omit<
+  Parameters<typeof resolveCommandDevice>[0],
+  'androidAvdSelection'
+>;
+
 /** Boot and shutdown both allow a stopped Android AVD to be selected by name. */
 export async function resolvePowerCommandDevice(
-  params: Omit<Parameters<typeof resolveCommandDevice>[0], 'androidAvdSelection'>,
+  params: PowerCommandDeviceParams,
 ): Promise<DeviceInfo> {
   return await resolveCommandDevice({ ...params, androidAvdSelection: 'include-stopped' });
+}
+
+/**
+ * Boot's device with its selection evidence. Boot alone reads the `--pick` opt-in; shutdown shares
+ * the stopped-AVD scope above and keeps refusing a tie.
+ */
+export async function resolveBootCommandSelection(
+  params: PowerCommandDeviceParams,
+): Promise<DeviceSelectionResult> {
+  if (params.session && !hasExplicitDeviceSelector(params.flags)) {
+    return resolveExistingSessionDeviceSelection(await resolvePowerCommandDevice(params));
+  }
+  return await resolveTargetDeviceSelection(params.flags ?? {}, {
+    env: params.env,
+    androidAvdSelection: 'include-stopped',
+    boot: { pick: params.flags?.pick },
+  });
 }
 
 export async function refreshSessionDeviceIfNeeded(

@@ -5,6 +5,7 @@ import {
   hostAppDevice,
   hostDeviceIdOf,
   isMacOsBundleId,
+  resolveDevice,
   type DeviceInfo,
 } from './device.ts';
 
@@ -44,4 +45,32 @@ test.each([
   ['com.example app', false],
 ])('isMacOsBundleId(%j) is %s', (value, expected) => {
   assert.equal(isMacOsBundleId(value), expected);
+});
+
+const shutDownIphone: DeviceInfo = {
+  platform: 'apple',
+  id: 'sim-iphone',
+  name: 'iPhone 17',
+  kind: 'simulator',
+  target: 'mobile',
+  appleOs: 'ios',
+  booted: false,
+};
+
+test('an iPad simulator renamed without "iPad" still ranks below an iPhone', async () => {
+  const renamedIpad: DeviceInfo = {
+    ...shutDownIphone,
+    id: 'sim-tablet',
+    name: 'Design Review',
+    appleOs: 'ipados',
+  };
+  const selected = await resolveDevice([renamedIpad, shutDownIphone], { platform: 'ios' });
+  assert.equal(selected.id, shutDownIphone.id);
+});
+
+test('a record without appleOs still ranks as an iPad by its name', async () => {
+  const { appleOs: _phoneOs, ...legacyIphone } = shutDownIphone;
+  const legacyIpad: DeviceInfo = { ...legacyIphone, id: 'sim-ipad', name: 'iPad Air' };
+  const selected = await resolveDevice([legacyIpad, legacyIphone], { platform: 'ios' });
+  assert.equal(selected.id, legacyIphone.id);
 });

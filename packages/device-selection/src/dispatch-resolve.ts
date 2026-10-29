@@ -19,6 +19,7 @@ import {
   shouldPropagateDeviceInventoryProbeError,
 } from './device-inventory-context.ts';
 import type {
+  BootSelectionIntent,
   DeviceSelectionResult,
   InventoryDeviceSelectionParams,
 } from './device-selection-resolver.ts';
@@ -68,6 +69,8 @@ export type ResolveTargetDeviceOptions = {
    * (ADR 0035), the selection is that app's device instead of the host.
    */
   appDeviceTarget?: string;
+  /** Only `boot` sets this; every other command keeps refusing a tie. */
+  boot?: BootSelectionIntent;
 };
 
 function canFallbackAfterAppleDeviceNotFound(
@@ -138,6 +141,7 @@ export async function resolveTargetDeviceSelection(
           {
             simulatorSetPath: iosSimulatorSetPath,
             appleSimulatorAppTarget: options.appleSimulatorAppTarget,
+            boot: options.boot,
           },
         );
         return await selectAppDevice(
@@ -150,6 +154,7 @@ export async function resolveTargetDeviceSelection(
         devices,
         selector,
         source: inventory.source,
+        boot: options.boot,
       });
       return await selectAppDevice(
         cacheResolvedTargetDevice(cacheKey, selection),
@@ -180,6 +185,7 @@ async function resolveLocalAppleDeviceSelection(
   context: {
     simulatorSetPath?: string;
     appleSimulatorAppTarget?: string;
+    boot?: BootSelectionIntent;
   },
 ): Promise<DeviceSelectionResult> {
   let selection: DeviceSelectionResult | undefined;
@@ -189,6 +195,7 @@ async function resolveLocalAppleDeviceSelection(
       selector,
       source: 'local',
       appleSimulatorAppTarget: context.appleSimulatorAppTarget,
+      boot: context.boot,
     });
   } catch (error) {
     if (!canFallbackAfterAppleDeviceNotFound(error, selector)) throw error;
@@ -206,7 +213,7 @@ async function resolveLocalAppleDeviceSelection(
 
 async function resolveAppleSimulatorFallback(
   selector: AppleDeviceSelector,
-  context: { simulatorSetPath?: string },
+  context: { simulatorSetPath?: string; boot?: BootSelectionIntent },
   selected: DeviceInfo | undefined,
 ): Promise<DeviceSelectionResult | undefined> {
   if (!shouldUseAppleSimulatorFallback(selector, selected)) return undefined;
@@ -221,6 +228,7 @@ async function resolveAppleSimulatorFallback(
       devices: localDevices,
       selector,
       source: 'local',
+      boot: context.boot,
     });
   } catch (error) {
     if (shouldPropagateDeviceInventoryProbeError(error)) throw error;

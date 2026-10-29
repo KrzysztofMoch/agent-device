@@ -15,6 +15,7 @@ import type {
   SessionRuntimeHints,
 } from '@agent-device/kernel/contracts';
 import type { SnapshotCommandOptionFields } from '@agent-device/kernel/snapshot';
+import type { BootPickPolicy } from '@agent-device/kernel/device';
 import type { DaemonBatchStep } from './batch-step.ts';
 import type { ReplayRequestFields } from './replay-request-fields.ts';
 import type { AgentDeviceClientConfig, AgentDeviceSelectionOptions } from './client-connection.ts';
@@ -50,6 +51,7 @@ export type CommandExecutionOptions = Partial<ScreenshotRequestFlags> &
     pauseMs?: number;
     pattern?: SwipePattern;
     headless?: boolean;
+    pick?: BootPickPolicy;
     restart?: boolean;
     replayBackend?: string;
     findFirst?: boolean;

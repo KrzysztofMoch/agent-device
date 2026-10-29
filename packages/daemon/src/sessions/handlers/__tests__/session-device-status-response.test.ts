@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { TargetShutdownResult } from '@agent-device/contracts/device';
+import type { DeviceSelectionMetadata } from '@agent-device/contracts/client';
 import { ANDROID_EMULATOR, IOS_SIMULATOR } from '@agent-device/test-kit';
 import { deviceStatusReportResponse } from '../session-device-status-response.ts';
 
@@ -10,11 +11,18 @@ const shutdownResult: TargetShutdownResult = {
   stderr: '',
 };
 
+const selection: DeviceSelectionMetadata = {
+  reason: 'single-bootable-local',
+  source: 'local',
+  candidateCount: 1,
+  bootOccurred: true,
+};
+
 describe('deviceStatusReportResponse', () => {
   test('emits the public identity fields with the boot status', () => {
     const response = deviceStatusReportResponse(
       { ...IOS_SIMULATOR, target: 'mobile' },
-      { booted: true },
+      { booted: true, selection },
     );
     expect(response).toEqual({
       ok: true,
@@ -25,6 +33,7 @@ describe('deviceStatusReportResponse', () => {
         id: 'sim-1',
         kind: 'simulator',
         booted: true,
+        selection,
         appleOs: 'ios',
       },
     });
@@ -37,6 +46,7 @@ describe('deviceStatusReportResponse', () => {
       'id',
       'kind',
       'booted',
+      'selection',
       'appleOs',
     ]);
   });
@@ -52,7 +62,7 @@ describe('deviceStatusReportResponse', () => {
   test('never surfaces a stray appleOs on a non-Apple platform', () => {
     const response = deviceStatusReportResponse(
       { ...ANDROID_EMULATOR, appleOs: 'ios' },
-      { booted: true },
+      { booted: true, selection },
     );
     expect(response.ok).toBe(true);
     if (!response.ok) return;
