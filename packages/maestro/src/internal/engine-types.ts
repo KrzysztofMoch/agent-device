@@ -166,8 +166,8 @@ export type MaestroEngineOptions = {
   observer?: MaestroEngineObserver;
   now?: () => number;
   /**
-   * False for a flow accepted over the daemon's remote HTTP surface. `evalScript`
-   * runs the caller's expression through `node:vm`, which Node documents as not a
+   * False for a flow accepted over the daemon's remote HTTP surface. `runScript`,
+   * `evalScript`, and JavaScript conditions run caller code through `node:vm`, which is not a
    * security boundary — the bound context's prototype chain still resolves to host
    * `Object`/`Function`, so an untrusted expression can escape. Undefined/true is
    * trusted: CLI-invoked and daemon-local flows never carry this as false.

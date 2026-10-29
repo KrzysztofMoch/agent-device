@@ -112,7 +112,7 @@ async function executeTypedMaestroReplay(
     onStep,
   } = command;
   const context = await prepareTypedMaestroReplay({ host, command, bundle });
-  // evalScript runs via node:vm, which is not a security sandbox; only trust it
+  // Flow scripts run via node:vm, which is not a security sandbox; only trust them
   // for flows that did not arrive over the daemon's remote HTTP surface.
   const publicNetworkOnly = command.publicNetworkOnly === true;
   const port = createMaestroReplayPort({

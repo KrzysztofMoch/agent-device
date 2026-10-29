@@ -84,6 +84,9 @@ async function executeOptionalCommand(
   if (rawCommand.kind === 'evalScript') {
     return await executeEvalScript(rawCommand, state);
   }
+  if (rawCommand.kind === 'runScript') {
+    assertMaestroScriptsTrusted(state.options, 'runScript');
+  }
   const command = resolveCommand(rawCommand, state.context);
   try {
     return await executeResolvedCommand(command, appId, state);

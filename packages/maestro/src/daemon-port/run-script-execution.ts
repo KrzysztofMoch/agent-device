@@ -6,6 +6,7 @@ import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import { runCmdSync } from '@agent-device/host-kit/command';
 import { stripUndefined } from '@agent-device/kernel/record';
 import type { RunScriptHttpRequest, RunScriptHttpResponse } from './run-script-http.ts';
+import { assertMaestroScriptsTrusted } from '../internal/engine-flow.ts';
 
 const RUN_SCRIPT_TIMEOUT_MS = 30_000;
 const RUN_SCRIPT_DIAGNOSTIC_PREVIEW_CHARS = 1_000;
@@ -21,6 +22,7 @@ export function executeRunScriptFile(params: {
   publicNetworkOnly: boolean;
 }): Record<string, string> {
   const { scriptPath, env, publicNetworkOnly } = params;
+  assertMaestroScriptsTrusted({ trustedScripts: !publicNetworkOnly }, 'runScript');
   const script = fs.readFileSync(scriptPath, 'utf8');
   const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
 

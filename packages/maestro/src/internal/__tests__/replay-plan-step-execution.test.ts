@@ -4,6 +4,38 @@ import { parseMaestroProgram } from '../program-ir-parser.ts';
 import type { MaestroRuntimePort } from '../engine-types.ts';
 import { executeMaestroProgram, makePort } from './runtime-port-fixtures.ts';
 
+describe('runScript trust', () => {
+  test.each(['setup.js', '${MISSING_SCRIPT}'])(
+    'refuses untrusted script %s before interpolation or dispatch to a custom runtime port',
+    async (file) => {
+      const port = makePort();
+      const program = parseMaestroProgram(`---\n- runScript: ${file}`);
+
+      await expect(
+        executeMaestroProgram(program, port, { trustedScripts: false }),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(port.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([undefined, true])(
+    'dispatches trusted scripts with trustedScripts=%s',
+    async (trustedScripts) => {
+      const port = makePort();
+      const program = parseMaestroProgram('---\n- runScript: setup.js');
+
+      const result = await executeMaestroProgram(program, port, { trustedScripts });
+
+      expect(result.executed).toBe(1);
+      expect(port.execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: expect.objectContaining({ kind: 'runScript', file: 'setup.js' }),
+        }),
+      );
+    },
+  );
+});
+
 describe('repeat and condition execution', () => {
   test('repeat while evaluates JavaScript expressions and retains output updates', async () => {
     const texts: string[] = [];

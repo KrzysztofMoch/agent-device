@@ -16,7 +16,7 @@ Accepted
 - Before another mutating command, settle the pending stabilization boundary. Commands with specialized completion semantics settle inline instead.
 - An authored observation after a mutation skips the pending barrier and polls its own condition immediately.
 - Preserve the performance contract. Encode documented intentional deviations as declared expected-divergence entries.
-- Keep `${...}` interpolation variable-lookup-only. Gate `evalScript` with `MaestroEngineOptions.trustedScripts`.
+- Keep `${...}` interpolation variable-lookup-only. Gate `runScript`, `evalScript`, and JavaScript conditions with `MaestroEngineOptions.trustedScripts`.
 - Do not ship two production engines or a runtime fallback between them.
 
 ## Context
@@ -245,10 +245,15 @@ Their two-pointer plans, executor selection, and app-observable effects must rem
   A bound context's prototype chain still resolves to host `Object`/`Function`, so an untrusted expression can escape it.
   `runScript` already carried this trust assumption for daemon-local flows.
   `evalScript` inherits the same assumption.
-  However, `evalScript` is reachable from a flow accepted over the daemon's remote HTTP surface.
-  Thus, `MaestroEngineOptions.trustedScripts` gates `evalScript`.
+  `runScript`, `evalScript`, and JavaScript conditions are reachable from flows accepted over the daemon's remote HTTP surface.
+  Thus, `MaestroEngineOptions.trustedScripts` gates all three forms of JavaScript execution.
   The HTTP boundary (`restrictRemoteHttpRequest`) sets that option from `publicNetworkOnly`.
-  If the option is false, `evalScript` is refused outright.
+  If the option is false, refuse JavaScript execution before runtime dispatch or script-file access.
+  The daemon script-file executor also refuses remote requests before it reads a file.
+  Remote `runScript` is refused for every path, including files in the replay bundle.
+  Path confinement alone cannot make remote JavaScript execution safe.
+  Trusted local `runScript` retains daemon-filesystem access, including absolute paths, parent paths, and symlinks.
+  Relative script paths resolve from the containing flow.
 - Shipping two production engines or a runtime fallback between them is rejected because it doubles semantic and performance ownership.
 - Source provenance and runtime values stay typed through execution.
 - Compatibility policy remains local, while device behavior stays in shared runtimes and backends.

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { AppError } from '@agent-device/kernel/errors';
 import { executeRunScriptFile } from '../run-script-execution.ts';
 import { mkdtempForTestSync } from '../../tmp-dir.fixtures.ts';
@@ -100,10 +100,11 @@ output.result = [
   }
 });
 
-test('executeRunScriptFile blocks non-public HTTP destinations for remote requests', () => {
+test('executeRunScriptFile refuses remote scripts before reading or running host code', () => {
   const root = mkdtempForTestSync('agent-device-maestro-run-script-');
   const scriptPath = path.join(root, 'setup.js');
-  fs.writeFileSync(scriptPath, `output.result = http.post('http://127.0.0.1:8080')`);
+  fs.writeFileSync(scriptPath, `throw new Error('host-script-canary')`);
+  const read = vi.spyOn(fs, 'readFileSync');
 
   try {
     expect(() =>
@@ -112,8 +113,10 @@ test('executeRunScriptFile blocks non-public HTTP destinations for remote reques
         env: {},
         publicNetworkOnly: true,
       }),
-    ).toThrow(/non-public address/);
+    ).toThrow(expect.objectContaining({ code: 'UNAUTHORIZED' }));
+    expect(read.mock.calls.some(([file]) => file === scriptPath)).toBe(false);
   } finally {
+    read.mockRestore();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
